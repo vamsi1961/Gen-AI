@@ -1,0 +1,162 @@
+{
+    "success": true,
+    "credits_left": 100,
+    "rate_limit_left": 100,
+    "person": {
+      "publicIdentifier": "cheedella-vamsi-kishore",
+      "linkedInIdentifier": "ACoAAC_sKU4BzzvDgyzROEMpqLLMSnU6GaoAOc8",
+      "memberIdentifier": "804006222",
+      "linkedInUrl": "https://www.linkedin.com/in/cheedella-vamsi-kishore",
+      "firstName": "Cheedella",
+      "lastName": "Vamsi Kishore",
+      "headline": "Team member at RIG NITC \nElectrical and Electronics Engineer",
+      "location": "Guntur Mandal, Andhra Pradesh, India",
+      "summary": "https://vamsi1961.github.io/",
+      "photoUrl": "https://media.licdn.com/dms/image/v2/D5603AQG1fw-VQ62kuw/profile-displayphoto-shrink_800_800/profile-displayphoto-shrink_800_800/0/1704376464730?e=1748476800&v=beta&t=t0a6qpLynr3QQ1JpJl8VqE_GamhvRgWZR3jokDE_aN8",
+      "backgroundUrl": null,
+      "openToWork": false,
+      "premium": false,
+      "pronoun": null,
+      "showVerificationBadge": true,
+      "creationDate": {
+        "month": 3,
+        "year": 2020
+      },
+      "followerCount": 980,
+      "positions": {
+        "positionsCount": 1,
+        "positionHistory": [
+          {
+            "title": "",
+            "companyName": "",
+            "description": "",
+            "startEndDate": {
+              "start": {
+                "month": null,
+                "year": null
+              },
+              "end": {
+                "month": null,
+                "year": null
+              }
+            },
+            "companyLogo": null,
+            "linkedInUrl": null
+          }
+        ]
+      },
+      "schools": {
+        "educationsCount": 1,
+        "educationHistory": [
+          {
+            "degreeName": "Bachelor's degree",
+            "fieldOfStudy": "Electrical and Electronics Engineering",
+            "description": "Skills: Robotics",
+            "linkedInUrl": "https://www.linkedin.com/company/15094379/",
+            "schoolLogo": "https://media.licdn.com/dms/image/v2/C4E0BAQGV9kVeWPEERA/company-logo_400_400/company-logo_400_400/0/1631343025820?e=1748476800&v=beta&t=n5UxYp6vRpltmHvCuRtOghtM0b3cv8mwmVQgNApSgUU",
+            "schoolName": "National Institute of Technology Calicut",
+            "startEndDate": {
+              "start": {
+                "month": 1,
+                "year": 2018
+              },
+              "end": {
+                "month": 1,
+                "year": 2022
+              }
+            }
+          }
+        ]
+      },
+      "skills": [
+        "Robotics",
+        "Project Management",
+        "Assembly Language",
+        "Robot Operating System (ROS)",
+        "Deep Learning",
+        "Image Processing",
+        "Python (Programming Language)",
+        "C (Programming Language)",
+        "MATLAB",
+        "Arduino IDE",
+        "Problem Solving",
+        "Proteus",
+        "MPLAB",
+        "OpenCV",
+        "Computer Vision",
+        "Machine Learning",
+        "Leadership",
+        "Robot",
+        "C++",
+        "Programming Languages",
+        "Neural Networks",
+        "Wireless Communications Systems",
+        "Printed Circuit Board (PCB) Design",
+        "Digital Circuit Design",
+        "Linux"
+      ],
+      "languages": [],
+      "languagesWithProficiency": [],
+      "recommendations": {
+        "recommendationsCount": 0,
+        "recommendationHistory": []
+      },
+      "certifications": {
+        "certificationsCount": 7,
+        "certificationHistory": [
+          {
+            "name": "Robotics: Estimation and Learning",
+            "organizationName": "Coursera",
+            "organizationUrl": "https://www.linkedin.com/company/2453129/",
+            "issuedDate": "Issued Oct 2022"
+          },
+          {
+            "name": "Introduction to Self-Driving Cars",
+            "organizationName": "Coursera",
+            "organizationUrl": "https://www.linkedin.com/company/2453129/",
+            "issuedDate": "Issued Dec 2021"
+          },
+          {
+            "name": "Convolutional Neural Networks",
+            "organizationName": "Coursera",
+            "organizationUrl": "https://www.linkedin.com/company/2453129/",
+            "issuedDate": "Issued Sep 2020"
+          },
+          {
+            "name": "Structuring Machine Learning Projects",
+            "organizationName": "Coursera",
+            "organizationUrl": "https://www.linkedin.com/company/2453129/",
+            "issuedDate": "Issued Sep 2020"
+          },
+          {
+            "name": "Improving Deep Neural Networks: Hyperparameter Tuning, Regularization and Optimization",
+            "organizationName": "Coursera",
+            "organizationUrl": "https://www.linkedin.com/company/2453129/",
+            "issuedDate": "Issued Aug 2020"
+          },
+          {
+            "name": "Neural Networks and Deep Learning",
+            "organizationName": "Coursera",
+            "organizationUrl": "https://www.linkedin.com/company/2453129/",
+            "issuedDate": "Issued Aug 2020"
+          },
+          {
+            "name": " Introduction to Programming with MATLAB",
+            "organizationName": "Coursera",
+            "organizationUrl": "https://www.linkedin.com/company/2453129/",
+            "issuedDate": "Issued Jul 2020"
+          }
+        ]
+      },
+      "testScores": {
+        "testScoresCount": 0,
+        "testScoreHistory": []
+      },
+      "volunteeringExperiences": {
+        "volunteeringExperiencesCount": 0,
+        "volunteeringExperienceHistory": []
+      },
+      "interests": {}
+    },
+    "company": null
+  }
