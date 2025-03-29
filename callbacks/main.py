@@ -10,7 +10,7 @@ from langchain.schema import AgentAction, AgentFinish
 from langchain.tools import Tool
 from langchain.tools.render import render_text_description
 
-from ingestion import AgentCallbackHandler
+from core import AgentCallbackHandler
 
 
 load_dotenv()
