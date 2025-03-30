@@ -29,6 +29,14 @@ def main():
         }
     )
 
+    csv_agent.invoke(
+        input={
+            "input": "write a simple python hello world code"
+        }
+    )
+    
+
+
 
 if __name__ == "__main__":
     main()
