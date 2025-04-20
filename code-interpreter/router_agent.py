@@ -97,3 +97,10 @@ def main():
 if __name__ == "__main__":
     main()
  
+ AZURE_OPENAI_API_KEY = "6202aa112d964a35aa3b08fe5d5f2700"  # Replace with your Azure API Key
+OPENAI_API_VERSION = "2024-02-15-preview"
+AZURE_DEPLOYMENT_NAME = "gpt-4o"  # Extracted from the URL
+AZURE_OPENAI_ENDPOINT = "https://genaitcgazuregpt.openai.azure.com"  # Extracted from the URL
+AZURE_MODEL_VERSION = "2024-02-15-preview"  # Likely same as API version unless specified otherwise
+USE_AZURE_OPENAI = "yes"
+RESPONSE_ENGINE="azure_openai"
