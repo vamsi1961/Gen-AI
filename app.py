@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from ice_breaker import ice_break_with
+from linkedin_agent import ice_break_with
 
 
 app = Flask(__name__)

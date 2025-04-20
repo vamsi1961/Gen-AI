@@ -27,7 +27,6 @@ if __name__ == "__main__":
     )
 
     tools = [TavilySearchResults(), multiply]
-    # llm = ChatOpenAI(model="gpt-4-turbo")
     llm = ChatAnthropic(model="claude-3-sonnet-20240229", temperature=0)
 
     agent = create_tool_calling_agent(llm, tools, prompt)
