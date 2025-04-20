@@ -70,7 +70,7 @@ def main():
 
     # Code generation + evaluation loop
     def process_code_request(user_request):
-        max_iterations = 3
+        max_iterations = 100
         for iteration in range(1, max_iterations + 1):
             print(f"\n===== ITERATION {iteration} =====")
 
