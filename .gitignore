@@ -1,3 +1,6 @@
 langchain/
 .env
 langchain-docs/
+linear_regression_agent/submission.csv
+linear_regression_agent/test.csv
+linear_regression_agent/train.csv
