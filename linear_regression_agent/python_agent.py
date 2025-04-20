@@ -3,6 +3,11 @@ from langchain import hub
 from langchain_openai import ChatOpenAI
 from langchain.agents import create_react_agent, AgentExecutor
 from langchain_experimental.tools import PythonREPLTool
+from langchain_openai import AzureChatOpenAI
+
+import os
+
+
 
 load_dotenv()
 
@@ -18,12 +23,27 @@ def main():
     If it does not seem like you can write code to answer the question, just return "I don't know" as the answer.
     """
     base_prompt = hub.pull("langchain-ai/react-agent-template")
+
+    azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
+    
+    # Make sure to set these deployment names in your Azure OpenAI service
+    gpt4_deployment_name = os.getenv("AZURE_DEPLOYMENT_NAME")
+
+
     prompt = base_prompt.partial(instructions=instructions)
+
+    azure_llm = AzureChatOpenAI(
+        azure_endpoint=azure_endpoint,
+        api_key=azure_api_key,
+        deployment_name=gpt4_deployment_name,
+        temperature=0
+    )
 
     tools = [PythonREPLTool()]
     agent = create_react_agent(
         prompt=prompt,
-        llm=ChatOpenAI(temperature=0, model="gpt-4-turbo"),
+        llm=azure_llm,
         tools=tools,
     )
 

@@ -1,9 +1,10 @@
 from typing import Any
 
 from dotenv import load_dotenv
+import os
 from langchain import hub
 from langchain_core.tools import Tool
-from langchain_openai import ChatOpenAI
+from langchain_openai import AzureChatOpenAI
 from langchain.agents import (
     create_react_agent,
     AgentExecutor,
@@ -14,13 +15,19 @@ from langchain_experimental.agents.agent_toolkits import create_csv_agent
 
 load_dotenv()
 
-
 def main():
     print("Start...")
-
+    
+    # Azure OpenAI configuration
+    azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
+    
+    # Make sure to set these deployment names in your Azure OpenAI service
+    gpt4_deployment_name = os.getenv("AZURE_DEPLOYMENT_NAME")
+    
     instructions = """You are an agent designed to write and execute python code to answer questions.
     You have access to a python REPL, which you can use to execute python code.
-    You have qrcode package installed
+    
     If you get an error, debug your code and try again.
     Only use the output of your code to answer the question. 
     You might know the answer without running any code, but you should still run the code to get the answer.
@@ -30,28 +37,42 @@ def main():
     prompt = base_prompt.partial(instructions=instructions)
 
     tools = [PythonREPLTool()]
+    
+    # Initialize Azure OpenAI client instead of OpenAI
+    azure_llm = AzureChatOpenAI(
+        azure_endpoint=azure_endpoint,
+        api_key=azure_api_key,
+        deployment_name=gpt4_deployment_name,
+        temperature=0
+    )
+    
     python_agent = create_react_agent(
         prompt=prompt,
-        llm=ChatOpenAI(temperature=0, model="gpt-4-turbo"),
+        llm=azure_llm,
         tools=tools,
     )
 
     python_agent_executor = AgentExecutor(agent=python_agent, tools=tools, verbose=True)
 
-    csv_agent_executor: AgentExecutor = create_csv_agent(
-        llm=ChatOpenAI(temperature=0, model="gpt-4"),
-        path="episode_info.csv",
-        verbose=True,
-        allow_dangerous_code=True
-    )
+    csv_agent_executor = create_csv_agent(
+    llm=azure_llm,
+    path="episode_info.csv",
+    verbose=True,
+    allow_dangerous_code=True,
+    return_intermediate_steps=False,
+)
 
 
     ################################ Router Grand Agent ########################################################
 
 
-# this does the invoking
+    # this does the invoking
     def python_agent_executor_wrapper(original_prompt: str) -> dict[str, Any]:
         return python_agent_executor.invoke({"input": original_prompt})
+    
+    def csv_agent_executor_wrapper(prompt: str) -> str:
+        result = csv_agent_executor.invoke({"input": prompt})
+        return result["output"]
 
     tools = [
         Tool(
@@ -63,16 +84,16 @@ def main():
         ),
         Tool(
             name="CSV Agent",
-            func=csv_agent_executor.invoke,
+            func=csv_agent_executor_wrapper,
             description="""useful when you need to answer question over episode_info.csv file,
-                         takes an input the entire question and returns the answer after running pandas calculations""",
+                        takes the input question and returns the answer after running pandas calculations"""
         ),
     ]
 
     prompt = base_prompt.partial(instructions="")
     grand_agent = create_react_agent(
         prompt=prompt,
-        llm=ChatOpenAI(temperature=0, model="gpt-4-turbo"),
+        llm=azure_llm,
         tools=tools,
     )
     grand_agent_executor = AgentExecutor(agent=grand_agent, tools=tools, verbose=True)
@@ -85,22 +106,5 @@ def main():
         )
     )
 
-    print(
-        grand_agent_executor.invoke(
-            {
-                "input": "Generate and save in current working directory 15 qrcodes that point to `www.udemy.com/course/langchain`",
-            }
-        )
-    )
-
-
 if __name__ == "__main__":
     main()
- 
- AZURE_OPENAI_API_KEY = "6202aa112d964a35aa3b08fe5d5f2700"  # Replace with your Azure API Key
-OPENAI_API_VERSION = "2024-02-15-preview"
-AZURE_DEPLOYMENT_NAME = "gpt-4o"  # Extracted from the URL
-AZURE_OPENAI_ENDPOINT = "https://genaitcgazuregpt.openai.azure.com"  # Extracted from the URL
-AZURE_MODEL_VERSION = "2024-02-15-preview"  # Likely same as API version unless specified otherwise
-USE_AZURE_OPENAI = "yes"
-RESPONSE_ENGINE="azure_openai"

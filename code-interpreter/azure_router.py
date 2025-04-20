@@ -15,7 +15,6 @@ from langchain_experimental.agents.agent_toolkits import create_csv_agent
 
 load_dotenv()
 
-
 def main():
     print("Start...")
     
@@ -28,7 +27,6 @@ def main():
     
     instructions = """You are an agent designed to write and execute python code to answer questions.
     You have access to a python REPL, which you can use to execute python code.
-    You have qrcode package installed
     If you get an error, debug your code and try again.
     Only use the output of your code to answer the question. 
     You might know the answer without running any code, but you should still run the code to get the answer.
@@ -55,12 +53,14 @@ def main():
 
     python_agent_executor = AgentExecutor(agent=python_agent, tools=tools, verbose=True)
 
-    csv_agent_executor: AgentExecutor = create_csv_agent(
-        llm=azure_llm,
-        path="episode_info.csv",
-        verbose=True,
-        allow_dangerous_code=True
-    )
+    csv_agent_executor = create_csv_agent(
+    llm=azure_llm,
+    path="episode_info.csv",
+    verbose=True,
+    allow_dangerous_code=True,
+    return_intermediate_steps=False,
+    return_direct=True  # <--- IMPORTANT!
+)
 
 
     ################################ Router Grand Agent ########################################################
@@ -69,6 +69,9 @@ def main():
     # this does the invoking
     def python_agent_executor_wrapper(original_prompt: str) -> dict[str, Any]:
         return python_agent_executor.invoke({"input": original_prompt})
+    
+    def csv_agent_executor_wrapper(prompt: str) -> dict[str, Any]:
+        return csv_agent_executor.invoke({"input": prompt})
 
     tools = [
         Tool(
@@ -80,9 +83,9 @@ def main():
         ),
         Tool(
             name="CSV Agent",
-            func=csv_agent_executor.invoke,
+            func=csv_agent_executor_wrapper,
             description="""useful when you need to answer question over episode_info.csv file,
-                         takes an input the entire question and returns the answer after running pandas calculations""",
+                        takes the input question and returns the answer after running pandas calculations"""
         ),
     ]
 
@@ -101,15 +104,6 @@ def main():
             }
         )
     )
-
-    print(
-        grand_agent_executor.invoke(
-            {
-                "input": "Generate and save in current working directory 15 qrcodes that point to `www.udemy.com/course/langchain`",
-            }
-        )
-    )
-
 
 if __name__ == "__main__":
     main()
