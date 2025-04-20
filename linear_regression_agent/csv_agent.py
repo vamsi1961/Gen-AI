@@ -26,22 +26,18 @@ def main():
         deployment_name=gpt4_deployment_name,
         temperature=0
     )
-
-
+    tools = [PythonREPLTool()]
     csv_agent = create_csv_agent(
         llm=azure_llm,
         path="episode_info.csv",
         verbose=True,
-        allow_dangerous_code=True
+        allow_dangerous_code=True,
+        tools = tools
     )
 
     csv_agent.invoke(
         input={"input": "how many columns are there in file episode_info.csv"}
     )
-
-    
-
-
 
 if __name__ == "__main__":
     main()

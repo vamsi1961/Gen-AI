@@ -1,110 +1,109 @@
-from typing import Any
-
 from dotenv import load_dotenv
 import os
+import subprocess
 from langchain import hub
-from langchain_core.tools import Tool
 from langchain_openai import AzureChatOpenAI
-from langchain.agents import (
-    create_react_agent,
-    AgentExecutor,
-)
+from langchain.agents import create_react_agent, AgentExecutor
 from langchain_experimental.tools import PythonREPLTool
-from langchain_experimental.agents.agent_toolkits import create_csv_agent
+from langchain.tools import Tool
 
-
+# Load .env
 load_dotenv()
 
+
 def main():
-    print("Start...")
-    
-    # Azure OpenAI configuration
+    print("Starting AI Code Assistant...")
+
+    # Configure Azure OpenAI
     azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
     azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
-    
-    # Make sure to set these deployment names in your Azure OpenAI service
     gpt4_deployment_name = os.getenv("AZURE_DEPLOYMENT_NAME")
-    
-    instructions = """You are an agent designed to write and execute python code to answer questions.
-    You have access to a python REPL, which you can use to execute python code.
-    
-    If you get an error, debug your code and try again.
-    Only use the output of your code to answer the question. 
-    You might know the answer without running any code, but you should still run the code to get the answer.
-    If it does not seem like you can write code to answer the question, just return "I don't know" as the answer.
-        """
-    base_prompt = hub.pull("langchain-ai/react-agent-template")
-    prompt = base_prompt.partial(instructions=instructions)
 
-    tools = [PythonREPLTool()]
-    
-    # Initialize Azure OpenAI client instead of OpenAI
     azure_llm = AzureChatOpenAI(
         azure_endpoint=azure_endpoint,
         api_key=azure_api_key,
         deployment_name=gpt4_deployment_name,
         temperature=0
     )
+    # Custom Tool: Executes machine.py
+    def execute_machine_py(_):
+        try:
+            result = subprocess.run(["python", "machine.py"], capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                return f"APPROVED - machine.py ran successfully.\nOutput:\n{result.stdout.strip()}"
+            else:
+                return f"NEEDS REVISION - machine.py failed.\nErrors:\n{result.stderr.strip()}"
+        except subprocess.TimeoutExpired:
+            return "NEEDS REVISION - machine.py timed out during execution."
+
+    ExecutionTool = Tool(
+        name="RunMachinePy",
+        func=execute_machine_py,
+        description="Runs machine.py using subprocess and returns output or errors."
+    )
+
+    # Tools
+    tools = [PythonREPLTool(), ExecutionTool]
+
+    # Code Writer Agent
+    writer_prompt = hub.pull("langchain-ai/react-agent-template").partial(
+        instructions="""You are an agent designed to write Python code based on user requirements.
+        You have access to a Python REPL.
+        Write clean dont write any comments and save it as machine.py. If machine.py already exists, update it.
+        """
+    )
+    writer_agent = create_react_agent(llm=azure_llm, tools=tools, prompt=writer_prompt)
+    writer_executor = AgentExecutor(agent=writer_agent, tools=tools, verbose=True, handle_parsing_errors=True)
+
     
-    python_agent = create_react_agent(
-        prompt=prompt,
-        llm=azure_llm,
-        tools=tools,
+
+    # Code Evaluator Agent
+    evaluator_prompt = hub.pull("langchain-ai/react-agent-template").partial(
+        instructions="""You are an agent that checks if the code in machine.py works.
+        Use the 'RunMachinePy' tool to run it and evaluate its correctness.
+        If the code runs without errors, return 'APPROVED'.
+        If not, return 'NEEDS REVISION' and describe the problem.
+        """
     )
+    evaluator_agent = create_react_agent(llm=azure_llm, tools=tools, prompt=evaluator_prompt)
+    evaluator_executor = AgentExecutor(agent=evaluator_agent, tools=tools, verbose=True, handle_parsing_errors=True)
 
-    python_agent_executor = AgentExecutor(agent=python_agent, tools=tools, verbose=True)
+    # Code generation + evaluation loop
+    def process_code_request(user_request):
+        max_iterations = 3
+        for iteration in range(1, max_iterations + 1):
+            print(f"\n===== ITERATION {iteration} =====")
 
-    csv_agent_executor = create_csv_agent(
-    llm=azure_llm,
-    path="episode_info.csv",
-    verbose=True,
-    allow_dangerous_code=True,
-    return_intermediate_steps=False,
-)
+            print("\n[WRITER AGENT]: Generating code...\n")
+            writer_result = writer_executor.invoke(
+                {"input": f"Write Python code to: {user_request}"}
+            )
+            written_code = writer_result["output"]
 
+            print("\n[EVALUATOR AGENT]: Running and evaluating machine.py...\n")
+            eval_prompt = f"Check if the code in machine.py works correctly for: {user_request}"
+            eval_result = evaluator_executor.invoke({"input": eval_prompt})
+            evaluation = eval_result["output"]
 
-    ################################ Router Grand Agent ########################################################
+            print("\n[EVALUATION RESULT]:\n", evaluation)
 
+            if "APPROVED" in evaluation:
+                print("\n✅ CODE APPROVED!")
+                return {"status": "success", "code": written_code, "evaluation": evaluation}
 
-    # this does the invoking
-    def python_agent_executor_wrapper(original_prompt: str) -> dict[str, Any]:
-        return python_agent_executor.invoke({"input": original_prompt})
-    
-    def csv_agent_executor_wrapper(prompt: str) -> str:
-        result = csv_agent_executor.invoke({"input": prompt})
-        return result["output"]
+            print("\n🔁 Code needs revision. Rewriting...")
 
-    tools = [
-        Tool(
-            name="Python Agent",
-            func=python_agent_executor_wrapper,
-            description="""useful when you need to transform natural language to python and execute the python code,
-                          returning the results of the code execution
-                          DOES NOT ACCEPT CODE AS INPUT""",
-        ),
-        Tool(
-            name="CSV Agent",
-            func=csv_agent_executor_wrapper,
-            description="""useful when you need to answer question over episode_info.csv file,
-                        takes the input question and returns the answer after running pandas calculations"""
-        ),
-    ]
+        print("\n⚠️ Maximum iterations reached. Returning best attempt.")
+        return {"status": "partial", "code": written_code, "evaluation": evaluation}
 
-    prompt = base_prompt.partial(instructions="")
-    grand_agent = create_react_agent(
-        prompt=prompt,
-        llm=azure_llm,
-        tools=tools,
-    )
-    grand_agent_executor = AgentExecutor(agent=grand_agent, tools=tools, verbose=True)
+    # Start interaction
+    user_request = input("\nWhat application would you like me to create? ")
+    result = process_code_request(user_request)
 
-    print(
-        grand_agent_executor.invoke(
-            {
-                "input": "which season has the most episodes?",
-            }
-        )
-    )
+    if result["status"] in ["success", "partial"]:
+        with open("generated_application.py", "w") as f:
+            f.write(result["code"])
+        print("\n💾 Code saved to generated_application.py")
 
 if __name__ == "__main__":
     main()

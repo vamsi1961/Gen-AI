@@ -51,7 +51,8 @@ def main():
 
     agent_executor.invoke(
         input={
-            "input": """ create a python file and write hello world """
+            "input": """ Create a Python file named 'hello_world.py' with content that prints 'Hello World' 
+    and then execute that file to show the output."""
         }
     )
 
