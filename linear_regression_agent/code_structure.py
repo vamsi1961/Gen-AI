@@ -132,7 +132,7 @@ def main():
 
     def find_tool_by_name(tools: List[Tool], tool_name: str) -> Tool:
         for tool in tools:
-            if tool.name == tool_name:
+            if tool_name.strip().lower() in tool.name.strip().lower():
                 return tool
         raise ValueError(f"Tool with name {tool_name} not found")
 
@@ -149,6 +149,7 @@ def main():
                     "agent_scratchpad": intermediate_steps,
                 }
             )
+            print(agent_step)
 
             # ✅ Handle tool usage
             if isinstance(agent_step, AgentAction):
@@ -166,6 +167,11 @@ def main():
 
                 final_answer = agent_step.return_values["output"]
                 intermediate_steps.append((agent_step, final_answer))
+                return {
+                    "status": "success",
+                    "evaluation": evaluation,
+                    "intermediate_steps": intermediate_steps
+                }
 
             # ✅ Run evaluation every time
             print("\n🧪 Evaluating code...")
@@ -177,14 +183,7 @@ def main():
 
             if "APPROVED" in evaluation:
                 print("\n✅ CODE APPROVED!")
-                return {
-                    "status": "success",
-                    "evaluation": evaluation,
-                    "intermediate_steps": intermediate_steps
-                }
-
-            print("\n🔁 Code needs revision. Continuing...")
-
+                
         print("❌ Reached maximum iterations without APPROVED result.")
         return {
             "status": "failed",

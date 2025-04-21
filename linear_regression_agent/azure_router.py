@@ -42,7 +42,7 @@ def main():
     )
 
     # Tools
-    tools = [PythonREPLTool(), ExecutionTool]
+    tools = [PythonREPLTool()]
 
     # Code Writer Agent
     writer_prompt = hub.pull("langchain-ai/react-agent-template").partial(
