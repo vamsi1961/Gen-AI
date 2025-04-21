@@ -101,7 +101,7 @@ def main():
         return {"status": "partial", "code": written_code, "evaluation": evaluation}
 
     # Start interaction
-    user_request = "write a python code for fibonacci series upto 10"
+    user_request = "write a python code for fibonacci series upto 10 and also write print hello world program do step by step update the code "
     result = process_code_request(user_request)
 
     if result["status"] in ["success", "partial"]:

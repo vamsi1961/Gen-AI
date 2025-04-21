@@ -3,53 +3,15 @@ import os
 import subprocess
 from langchain import hub
 from langchain_openai import AzureChatOpenAI
-from langchain.agents import create_react_agent
-from langchain.schema import AgentAction, AgentFinish
+from langchain.agents import create_react_agent, AgentExecutor
 from langchain_experimental.tools import PythonREPLTool
 from langchain.tools import Tool
-
-
-os.environ["LANGCHAIN_TRACING_V2"] = "false"
-os.environ["LANGCHAIN_API_KEY"] = ""
-
 
 # Load .env
 load_dotenv()
 
-# Run ReAct-style agent with intermediate steps
-def run_agent_with_steps(agent, tools, input_text: str, max_iterations: int = 10):
-    intermediate_steps = []
-
-    for i in range(max_iterations):
-        print(f"\n--- Iteration {i+1} ---")
-        agent_step = agent.invoke({
-                "input": input_text,
-                "intermediate_steps": intermediate_steps,
-            })
-
-        print(f"Agent output: {agent_step}")
-
-        if isinstance(agent_step, AgentFinish):
-            print("### Agent Finished ###")
-            print(f"Final Answer: {agent_step.return_values['output']}")
-            return agent_step.return_values["output"]
-
-        elif isinstance(agent_step, AgentAction):
-            tool_name = agent_step.tool
-            tool_input = agent_step.tool_input
-            tool = next(t for t in tools if t.name == tool_name)
-            observation = tool.run(tool_input)
-            intermediate_steps.append((agent_step, observation))
-            print(f"Tool: {tool_name} | Input: {tool_input} | Output: {observation}")
-        else:
-            print("Unexpected output:", agent_step)
-
-    print("⚠️ Max iterations reached.")
-    return None
 
 def main():
-
-
     print("Starting AI Code Assistant...")
 
     # Configure Azure OpenAI
@@ -63,7 +25,6 @@ def main():
         deployment_name=gpt4_deployment_name,
         temperature=0
     )
-
     # Custom Tool: Executes machine.py
     def execute_machine_py(_):
         try:
@@ -88,11 +49,17 @@ def main():
     writer_prompt = hub.pull("langchain-ai/react-agent-template").partial(
         instructions="""You are an agent designed to write Python code based on user requirements.
         You have access to a Python REPL.
-        Write clean code without any comments and save it as machine.py. If machine.py already exists, update it.
+        Write clean dont write any comments and save it as machine.py. If machine.py already exists, update it.
         """
     )
 
+
+    print(f"writer_prompt is {writer_prompt}")
+
     writer_agent = create_react_agent(llm=azure_llm, tools=tools, prompt=writer_prompt)
+    writer_executor = AgentExecutor(agent=writer_agent, tools=tools, verbose=True, handle_parsing_errors=True)
+
+    
 
     # Code Evaluator Agent
     evaluator_prompt = hub.pull("langchain-ai/react-agent-template").partial(
@@ -103,23 +70,24 @@ def main():
         """
     )
     evaluator_agent = create_react_agent(llm=azure_llm, tools=tools, prompt=evaluator_prompt)
+    evaluator_executor = AgentExecutor(agent=evaluator_agent, tools=tools, verbose=True, handle_parsing_errors=True)
 
     # Code generation + evaluation loop
     def process_code_request(user_request):
-        max_iterations = 10
+        max_iterations = 100
         for iteration in range(1, max_iterations + 1):
             print(f"\n===== ITERATION {iteration} =====")
 
             print("\n[WRITER AGENT]: Generating code...\n")
-            writer_output = run_agent_with_steps(writer_agent, tools, f"Write Python code to: {user_request}")
-            if writer_output:
-                written_code = writer_output
-            else:
-                written_code = "# Failed to generate code"
+            writer_result = writer_executor.invoke(
+                {"input": f"Write Python code to: {user_request}"}
+            )
+            written_code = writer_result["output"]
 
             print("\n[EVALUATOR AGENT]: Running and evaluating machine.py...\n")
-            eval_output = run_agent_with_steps(evaluator_agent, tools, f"Check if the code in machine.py works correctly for: {user_request}")
-            evaluation = eval_output or "NEEDS REVISION - Evaluation failed."
+            eval_prompt = f"Check if the code in machine.py works correctly for: {user_request}"
+            eval_result = evaluator_executor.invoke({"input": eval_prompt})
+            evaluation = eval_result["output"]
 
             print("\n[EVALUATION RESULT]:\n", evaluation)
 
@@ -133,7 +101,7 @@ def main():
         return {"status": "partial", "code": written_code, "evaluation": evaluation}
 
     # Start interaction
-    user_request = "write a python code for fibonacci series upto 10"
+    user_request = "write a python code for fibonacci series upto 10 and also write print hello world program do step by step update the code "
     result = process_code_request(user_request)
 
     if result["status"] in ["success", "partial"]:
