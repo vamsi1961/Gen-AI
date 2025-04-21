@@ -1,6 +1,9 @@
+def fibonacci(n):
+    sequence = []
+    a, b = 0, 1
+    while len(sequence) < n:
+        sequence.append(a)
+        a, b = b, a + b
+    return sequence
 
-fibonacci_series = [0, 1]
-for i in range(2, 10):
-    next_number = fibonacci_series[-1] + fibonacci_series[-2]
-    fibonacci_series.append(next_number)
-print(fibonacci_series)
+print(fibonacci(10))
