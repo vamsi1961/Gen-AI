@@ -44,7 +44,7 @@ def run_agent_with_steps(agent, tools, input_text: str, max_iterations: int = 10
         else:
             print("Unexpected output:", agent_step)
 
-    print("⚠️ Max iterations reached.")
+    print("Max iterations reached.")
     return None
 
 def main():
@@ -98,7 +98,7 @@ def main():
     evaluator_prompt = hub.pull("langchain-ai/react-agent-template").partial(
         instructions="""You are an agent that checks if the code in machine.py works.
         Use the 'RunMachinePy' tool to run it and evaluate its correctness.
-        If the code runs without errors, return 'APPROVED'.
+        If the code runs without errors and meets the user_request, return 'APPROVED'.
         If not, return 'NEEDS REVISION' and describe the problem.
         """
     )
@@ -124,22 +124,22 @@ def main():
             print("\n[EVALUATION RESULT]:\n", evaluation)
 
             if "APPROVED" in evaluation:
-                print("\n✅ CODE APPROVED!")
+                print("\nCODE APPROVED!")
                 return {"status": "success", "code": written_code, "evaluation": evaluation}
 
-            print("\n🔁 Code needs revision. Rewriting...")
+            print("\nCode needs revision. Rewriting...")
 
-        print("\n⚠️ Maximum iterations reached. Returning best attempt.")
+        print("\n Maximum iterations reached. Returning best attempt.")
         return {"status": "partial", "code": written_code, "evaluation": evaluation}
 
     # Start interaction
-    user_request = "write a python code for fibonacci series upto 10"
+    user_request = "create a random dataframe of size (3,4) and half the sie and then give the shape of it. do it step by step "
     result = process_code_request(user_request)
 
     if result["status"] in ["success", "partial"]:
         with open("generated_application.py", "w") as f:
             f.write(result["code"])
-        print("\n💾 Code saved to generated_application.py")
+        print("\n Code saved to generated_application.py")
 
 if __name__ == "__main__":
     main()
