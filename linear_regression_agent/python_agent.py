@@ -6,6 +6,7 @@ from langchain_openai import AzureChatOpenAI
 from langchain.agents import create_react_agent, AgentExecutor
 from langchain_experimental.tools import PythonREPLTool
 from langchain.tools import Tool
+from langchain.prompts import PromptTemplate
 
 # Load .env
 load_dotenv()
@@ -25,6 +26,29 @@ def main():
         deployment_name=gpt4_deployment_name,
         temperature=0
     )
+
+    analyser_prompt = PromptTemplate.from_template("""
+        You are a data scientist. You have to break down the tasks into pre-processing, code and post processing.
+        
+        In pre-processing you have to write code and check 
+            1. if any null value is there
+            2. correlation what can be done
+            
+        Make sure:
+        - Steps are very fine-grained (1 action per step).
+        - Do not write code.
+        - Start from checking if file exists.
+        - Proceed to data loading only if it exists.
+        - Then proceed to the required computation like printing length.
+        - Give instructions and check so agents write code and tests 
+
+        {input}
+        """)
+    analyser_agent = create_react_agent(llm=azure_llm, tools=[], prompt=analyser_prompt)
+    analyser_executor = AgentExecutor(agent=analyser_agent, tools=[], verbose=True,handle_parsing_errors=True)
+
+
+
     # Custom Tool: Executes machine.py
     def execute_machine_py(_):
         try:
@@ -45,15 +69,6 @@ def main():
     # Tools
     tools = [PythonREPLTool(), ExecutionTool]
 
-
-    analyser_prompt = hub.pull("langchain-ai/react-agent-template").partial(
-        instructions="""You are an Machine learning Scientist agent, You have to write Machine Learning code for the given input and output in csv and question asked.
-        You have to finally write a code including preprocesing, ML code and testing for that you have to give a plan of action like for example pre-processing you have give steps like test 
-        1. any null values in csv
-        2. correlation etc. 
-        then writer_executor runs the code and evaluator_executor checks the code if 1st part is good then you have to go next code and code has to update.
-        """
-    )
 
     # Code Writer Agent
     writer_prompt = hub.pull("langchain-ai/react-agent-template").partial(
@@ -80,31 +95,36 @@ def main():
 
     # Code generation + evaluation loop
     def process_code_request(user_request):
-        max_iterations = 100
-        for iteration in range(1, max_iterations + 1):
-            print(f"\n===== ITERATION {iteration} =====")
+        print("\n[ANALYSER AGENT]: Generating fine-grained steps...\n")
+        analysis_result = analyser_executor.invoke({"input": user_request})
+        steps_text = analysis_result["output"]
 
-            print("\n[WRITER AGENT]: Generating code...\n")
-            writer_result = writer_executor.invoke(
-                {"input": f"Write Python code to: {user_request}"}
-            )
+        print("\n[PLAN]:\n", steps_text)
+        steps = [line.strip() for line in steps_text.split("\n") if line.lower().startswith("step")]
+
+        written_code = ""
+        for i, step in enumerate(steps, 1):
+            print(f"\n===== STEP {i}: {step} =====")
+
+            # Writer writes this part
+            print("\n[WRITER AGENT]: Writing code for step...\n")
+            writer_result = writer_executor.invoke({"input": f"Update machine.py to implement: {step}"})
             written_code = writer_result["output"]
 
-            print("\n[EVALUATOR AGENT]: Running and evaluating machine.py...\n")
-            eval_prompt = f"Check if the code in machine.py works correctly for: {user_request}"
-            eval_result = evaluator_executor.invoke({"input": eval_prompt})
+            # Evaluator runs it
+            print("\n[EVALUATOR AGENT]: Evaluating code...\n")
+            eval_result = evaluator_executor.invoke({"input": f"Check if machine.py correctly implements: {step}"})
             evaluation = eval_result["output"]
 
             print("\n[EVALUATION RESULT]:\n", evaluation)
 
             if "APPROVED" in evaluation:
-                print("\n✅ CODE APPROVED!")
-                return {"status": "success", "code": written_code, "evaluation": evaluation}
+                print("✅ Step approved. Proceeding.\n")
+            else:
+                print("❌ Step failed. Halting pipeline.\n")
+                return {"status": "partial", "step": i, "code": written_code, "evaluation": evaluation}
 
-            print("\n🔁 Code needs revision. Rewriting...")
-
-        print("\n⚠️ Maximum iterations reached. Returning best attempt.")
-        return {"status": "partial", "code": written_code, "evaluation": evaluation}
+        return {"status": "success", "code": written_code, "evaluation": "All steps approved."}
 
     # Start interaction
     user_request = input("\nWhat application would you like me to create? ")
