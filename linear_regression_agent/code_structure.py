@@ -6,6 +6,12 @@ from langchain_openai import AzureChatOpenAI
 from langchain.agents import create_react_agent, AgentExecutor
 from langchain_experimental.tools import PythonREPLTool
 from langchain.tools import Tool
+from langchain.agents.format_scratchpad import format_log_to_str
+from langchain.prompts import PromptTemplate
+from langchain.agents.output_parsers import ReActSingleInputOutputParser
+from langchain.tools.render import render_text_description
+from langchain.schema import AgentAction, AgentFinish
+from typing import Union, List, Dict, Any
 
 # Load .env
 load_dotenv()
@@ -18,13 +24,16 @@ def main():
     azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
     azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
     gpt4_deployment_name = os.getenv("AZURE_DEPLOYMENT_NAME")
-
+    os.environ["LANGCHAIN_TRACING_V2"] = "false"
+    print(" I am good")
     azure_llm = AzureChatOpenAI(
         azure_endpoint=azure_endpoint,
         api_key=azure_api_key,
         deployment_name=gpt4_deployment_name,
         temperature=0
     )
+    print("I am perfect")
+
     # Custom Tool: Executes machine.py
     def execute_machine_py(_):
         try:
@@ -49,17 +58,18 @@ def main():
     writer_prompt = hub.pull("langchain-ai/react-agent-template").partial(
         instructions="""You are an agent designed to write Python code based on user requirements.
         You have access to a Python REPL.
-        Write clean dont write any comments and save it as machine.py. If machine.py already exists, update it.
+        Write clean code without any comments and save it as machine.py. If machine.py already exists, update it.
         """
     )
-
-
-    print(f"writer_prompt is {writer_prompt}")
 
     writer_agent = create_react_agent(llm=azure_llm, tools=tools, prompt=writer_prompt)
     writer_executor = AgentExecutor(agent=writer_agent, tools=tools, verbose=True, handle_parsing_errors=True)
 
-    
+    WriterTool = Tool(
+        name="WriterAgent",
+        func=lambda input_text: writer_executor.invoke({"input": input_text})["output"],
+        description="Writes or updates machine.py with Python code based on the input prompt."
+    )
 
     # Code Evaluator Agent
     evaluator_prompt = hub.pull("langchain-ai/react-agent-template").partial(
@@ -72,20 +82,94 @@ def main():
     evaluator_agent = create_react_agent(llm=azure_llm, tools=tools, prompt=evaluator_prompt)
     evaluator_executor = AgentExecutor(agent=evaluator_agent, tools=tools, verbose=True, handle_parsing_errors=True)
 
+    # The tools available for the agent
+    tools = [WriterTool]
+
+    # Define the prompt template for ReAct Agent
+    template = """
+    Answer the following questions as best you can. You have access to the following tools:
+    {tools}
+    
+    Use the following format:
+    
+    Question: the input question you must answer
+    Thought: you should always think about what to do
+    Action: the action to take, should be one of [{tool_names}]
+    Action Input: the input to the action
+    Observation: the result of the action
+    ... (this Thought/Action/Action Input/Observation can repeat N times)
+    Thought: If the EvaluationTool says code is APPROVED then only you have to confirm that code is good.
+    Final Answer: the final answer to the original input question
+    
+    Begin!
+    
+    Question: {input}
+    {agent_scratchpad}
+    """
+
+    prompt = PromptTemplate.from_template(template=template).partial(
+        tools=render_text_description(tools),
+        tool_names=", ".join([t.name for t in tools]),
+    )
+
+    llm = AzureChatOpenAI(
+        azure_endpoint=azure_endpoint,
+        api_key=azure_api_key,
+        deployment_name=gpt4_deployment_name,
+        temperature=0,
+        stop=["\nObservation", "Observation"]
+    )
+
+    agent = (
+        {
+            "input": lambda x: x["input"],
+            "agent_scratchpad": lambda x: format_log_to_str(x["agent_scratchpad"]),
+        }
+        | prompt
+        | llm
+        | ReActSingleInputOutputParser()
+    )
+
+    def find_tool_by_name(tools: List[Tool], tool_name: str) -> Tool:
+        for tool in tools:
+            if tool.name == tool_name:
+                return tool
+        raise ValueError(f"Tool with name {tool_name} not found")
+
     # Code generation + evaluation loop
-    def process_code_request(user_request):
-        max_iterations = 100
-        for iteration in range(1, max_iterations + 1):
-            print(f"\n===== ITERATION {iteration} =====")
+    def run_agent_with_steps(agent, tools, input_text: str, max_iterations: int = 10):
+        """Run the agent for multiple iterations, evaluating after every step."""
+        intermediate_steps = []
 
-            print("\n[WRITER AGENT]: Generating code...\n")
-            writer_result = writer_executor.invoke(
-                {"input": f"Write Python code to: {user_request}"}
+        for i in range(max_iterations):
+            print(f"\n--- Iteration {i + 1} ---")
+            agent_step = agent.invoke(
+                {
+                    "input": input_text,
+                    "agent_scratchpad": intermediate_steps,
+                }
             )
-            written_code = writer_result["output"]
 
-            print("\n[EVALUATOR AGENT]: Running and evaluating machine.py...\n")
-            eval_prompt = f"Check if the code in machine.py works correctly for: {user_request}"
+            # ✅ Handle tool usage
+            if isinstance(agent_step, AgentAction):
+                tool_name = agent_step.tool
+                print(f"Selected tool: {tool_name}")
+                tool_to_use = find_tool_by_name(tools, tool_name)
+                tool_input = agent_step.tool_input
+                observation = tool_to_use.func(str(tool_input))
+                print(f"Observation: {observation}")
+                intermediate_steps.append((agent_step, str(observation)))
+
+            # ✅ Handle final output
+            elif isinstance(agent_step, AgentFinish):
+                print("Agent reached final answer.")
+
+                final_answer = agent_step.return_values["output"]
+                intermediate_steps.append((agent_step, final_answer))
+
+            # ✅ Run evaluation every time
+            print("\n🧪 Evaluating code...")
+            eval_prompt = f"Check if the code in machine.py works correctly for: {input_text}"
             eval_result = evaluator_executor.invoke({"input": eval_prompt})
             evaluation = eval_result["output"]
 
@@ -93,21 +177,28 @@ def main():
 
             if "APPROVED" in evaluation:
                 print("\n✅ CODE APPROVED!")
-                return {"status": "success", "code": written_code, "evaluation": evaluation}
+                return {
+                    "status": "success",
+                    "evaluation": evaluation,
+                    "intermediate_steps": intermediate_steps
+                }
 
-            print("\n🔁 Code needs revision. Rewriting...")
+            print("\n🔁 Code needs revision. Continuing...")
 
-        print("\n⚠️ Maximum iterations reached. Returning best attempt.")
-        return {"status": "partial", "code": written_code, "evaluation": evaluation}
+        print("❌ Reached maximum iterations without APPROVED result.")
+        return {
+            "status": "failed",
+            "intermediate_steps": intermediate_steps
+        }
+
 
     # Start interaction
-    user_request = "write a python code for fibonacci series upto 10 and also write print hello world program do step by step update the code "
-    result = process_code_request(user_request)
+    user_request = "write a python code for fibonacci series up to 10 and also write print hello world program do step by step update the code"
+    result = run_agent_with_steps(agent, tools, user_request)
+    print(result)
 
-    if result["status"] in ["success", "partial"]:
-        with open("generated_application.py", "w") as f:
-            f.write(result["code"])
-        print("\n💾 Code saved to generated_application.py")
+    print("\n💾 Code is good")
+
 
 if __name__ == "__main__":
     main()

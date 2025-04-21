@@ -10,7 +10,6 @@ from langchain.tools import Tool
 # Load .env
 load_dotenv()
 
-
 def main():
     print("Starting AI Code Assistant...")
 
@@ -59,7 +58,6 @@ def main():
     writer_agent = create_react_agent(llm=azure_llm, tools=tools, prompt=writer_prompt)
     writer_executor = AgentExecutor(agent=writer_agent, tools=tools, verbose=True, handle_parsing_errors=True)
 
-    
 
     # Code Evaluator Agent
     evaluator_prompt = hub.pull("langchain-ai/react-agent-template").partial(
