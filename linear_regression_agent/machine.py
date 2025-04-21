@@ -1,10 +1,6 @@
 
-def fibonacci(n):
-    a, b = 0, 1
-    for _ in range(n):
-        yield a
-        a, b = b, a + b
-
-if __name__ == "__main__":
-    for num in fibonacci(10):
-        print(num)
+fibonacci_series = [0, 1]
+for i in range(2, 10):
+    next_number = fibonacci_series[-1] + fibonacci_series[-2]
+    fibonacci_series.append(next_number)
+print(fibonacci_series)

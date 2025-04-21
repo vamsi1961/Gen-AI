@@ -1,166 +1,160 @@
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Union, List, Dict, Any
+from dotenv import load_dotenv
+from langchain.agents import tool
+from langchain.agents.format_scratchpad import format_log_to_str
+from langchain.agents.output_parsers import ReActSingleInputOutputParser
+from langchain_openai import ChatOpenAI
+from langchain.prompts import PromptTemplate
+from langchain.schema import AgentAction, AgentFinish
+from langchain.tools import Tool
+from langchain.tools.render import render_text_description
+from langchain_openai import AzureChatOpenAI
+import os
+import subprocess
+from langchain_experimental.tools import PythonREPLTool
 
-from langchain.agents.agent import AgentExecutor
-from langchain.agents import Tool, ZeroShotAgent, LLMSingleActionAgent, AgentOutputParser
-from langchain.callbacks.base import BaseCallbackManager
-from langchain.chains.llm import LLMChain
-from langchain.llms.base import BaseLLM
-from langchain.tools.python.tool import PythonAstREPLTool
-from langchain.memory import ConversationBufferMemory, ConversationSummaryBufferMemory
 
-from langchain.prompts import StringPromptTemplate
-from langchain import OpenAI
-from typing import List, Union
-from langchain.schema import AgentAction, AgentFinish, OutputParserException
-import re
-from langchain.tools import BaseTool
+os.environ["LANGCHAIN_TRACING_V2"] = "false"
+os.environ["LANGCHAIN_ENDPOINT"] = ""
+os.environ["LANGCHAIN_API_KEY"] = ""
+load_dotenv()
 
-import pandas as pd
-from typing import TYPE_CHECKING
-import tiktoken
-import math
+@tool
+def get_text_length(text: str) -> int:
+    """Returns the length of a text by characters"""
+    print(f"get_text_length called with {text=}")
+    text = text.strip("'\n").strip('"')  # stripping away non-alphabetic characters just in case
+    return len(text)
 
-from langchain.callbacks.manager import (
-    AsyncCallbackManager,
-    AsyncCallbackManagerForChainRun,
-    CallbackManager,
-    CallbackManagerForChainRun,
-    Callbacks,
+@tool
+def count_vowels(text: str) -> int:
+    """Count the number of vowels in the given text"""
+    print(f"count_vowels called with {text=}")
+    text = text.strip("'\n").strip('"')
+    vowels = "aeiouAEIOU"
+    return sum(1 for char in text if char in vowels)
+
+@tool
+def count_words(text: str) -> int:
+    """Count the number of words in the given text"""
+    print(f"count_words called with {text=}")
+    text = text.strip("'\n").strip('"')
+    return len(text.split())
+
+# Custom Tool: Executes machine.py
+def execute_machine_py(_):
+    try:
+        result = subprocess.run(["python", "machine.py"], capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            return f"APPROVED - machine.py ran successfully.\nOutput:\n{result.stdout.strip()}"
+        else:
+            return f"NEEDS REVISION - machine.py failed.\nErrors:\n{result.stderr.strip()}"
+    except subprocess.TimeoutExpired:
+        return "NEEDS REVISION - machine.py timed out during execution."
+
+ExecutionTool = Tool(
+    name="RunMachinePy",
+    func=execute_machine_py,
+    description="Runs machine.py using subprocess and returns output or errors."
 )
 
-from langchain.schema import (
-    BaseLLMOutputParser,
-    BasePromptTemplate,
-    LLMResult,
-    PromptValue,
-)
-
-from langchain.prompts.chat import (
-    ChatPromptTemplate,
-    SystemMessagePromptTemplate,
-    AIMessagePromptTemplate,
-    HumanMessagePromptTemplate,
-)
-from langchain.schema import AIMessage, HumanMessage, SystemMessage
-from langchain.prompts.base import StringPromptValue
-
-from langchain.prompts import PromptTemplate, ChatPromptTemplate, HumanMessagePromptTemplate
-from langchain.llms import OpenAI
-from langchain.chat_models import ChatOpenAI
-from langchain.output_parsers import PydanticOutputParser
-from pydantic import BaseModel, Field, validator
-
-from app.model.agent_df_processed_temp import *
-
-model = 'gpt-4'        
-llm = ChatOpenAI(temperature=0, model=model)
+python_tool = PythonREPLTool()
 
 
-# Run code in python and pass local files as arguments    
-tools = [PythonAstREPLTool(locals={"df": df)]
-tool_names = [tool.name for tool in tools]
+def find_tool_by_name(tools: List[Tool], tool_name: str) -> Tool:
+    for tool in tools:
+        if tool.name == tool_name:
+            return tool
+    raise ValueError(f"Tool with name {tool_name} not found")
 
-
-# Set up a prompt template
-class CustomPromptTemplate(StringPromptTemplate):
-    # The template to use
-    template: str
-    # The list of tools available
-    tools: List[BaseTool]
-
-    def format(self, **kwargs) -> str:
-        # enc = tiktoken.get_encoding("cl100k_base")
-        # Get the intermediate steps (AgentAction, Observation tuples)
-        # Format them in a particular way
-        intermediate_steps = kwargs.pop("intermediate_steps")
-        thoughts = ""
-        for action, observation in intermediate_steps:
-            thoughts += action.log
-            thoughts += f"\nObservation: {observation}\nThought: "
-        # Set the agent_scratchpad variable to that value
-            kwargs["agent_scratchpad"] = thoughts
-            # Create a tools variable from the list of tools provided
-            kwargs["tools"] = "\n".join([f"{tool.name}: {tool.description}" for tool in self.tools])
-            # Create a list of tool names for the tools provided
-            kwargs["tool_names"] = ", ".join([tool.name for tool in self.tools])
-        return self.template.format(**kwargs)
-
-
-partial_prompt = prompt.partial(df=str(df.head())))
-
-
-# Custom LLM Chain
-class CustomLLMChain(LLMChain):  
-    summary_model: BaseLLM = None
+def run_agent_with_steps(agent, tools, input_text: str, max_iterations: int = 10):
+    """Run the agent for multiple iterations until it reaches a final answer or max iterations"""
+    intermediate_steps = []
     
-    def __init__(self, summary_model=None, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.summary_model = summary_model
-    
-    def generate(
-        self,
-        input_list: List[Dict[str, Any]],
-        run_manager: Optional[CallbackManagerForChainRun] = None,
-    ) -> LLMResult:
-        """Generate LLM result from inputs."""
-        prompts, stop = self.prep_prompts(input_list, run_manager=run_manager)
-        if len(prompts)==0:
-            string_tmpr = prompts[0].to_string()
-            tokens = ENCODING.encode(string_tmpr)
-            if len(tokens)>LIMIT_TOKENS:
-                prompt = self.summarize(string_tmpr)
-                prompt += TEMPLATE + prompt
-                #print("Summarized prompt", prompt)
-                prompts = [StringPromptValue(text=prompt)]
-                
+    for i in range(max_iterations):
+        print(f"\n--- Iteration {i+1} ---")
+        agent_step = agent.invoke(
+            {
+                "input": input_text,
+                "agent_scratchpad": intermediate_steps,
+            }
+        )
         
-        return self.llm.generate_prompt(
-            prompts,
-            stop,
-            callbacks=run_manager.get_child() if run_manager else None,
-            **self.llm_kwargs,
-        )
+        print(f"Agent output: {agent_step}")
+        
+        if isinstance(agent_step, AgentFinish):
+            print("### Agent Finished ###")
+            print(f"Final Answer: {agent_step.return_values['output']}")
+            return agent_step
+            
+        if isinstance(agent_step, AgentAction):
+            tool_name = agent_step.tool
+            print(f"Selected tool: {tool_name}")
+            tool_to_use = find_tool_by_name(tools, tool_name)
+            tool_input = agent_step.tool_input
+            observation = tool_to_use.func(str(tool_input))
+            print(f"Observation: {observation}")
+            intermediate_steps.append((agent_step, str(observation)))
+            print(f"intermediate_steps is {intermediate_steps}")
+        
+    print("Reached maximum iterations without finishing")
+    return None
+
+if __name__ == "__main__":
+    print("Hello ReAct LangChain with Multiple Steps!")
     
-    def summarize(self, input: str) -> str:
-        SUMMARY_SYS_MSG = """
-        You are SummaryGPT, a model designed to ingest content and summarize it concisely and accurately
-        You will receive an input string, and your response will be a summary of this information for futher next steps. Lets think step by step
-        """
-
-        """Generate LLM result summary from inputs too meet token limits."""
-        system_message = SystemMessagePromptTemplate.from_template(
-            template=SUMMARY_SYS_MSG
-        )
-        human_message = HumanMessagePromptTemplate.from_template(
-            template="Input: {input}"
-        )
-
-        chunks = chunk(chunk_str=input)
-
-        summary = ""
-
-        for i in chunks:
-            prompt = ChatPromptTemplate(
-                input_variables=["input"],
-                messages=[system_message, human_message],
-            )
-
-            _input = prompt.format_prompt(input=i)
-            output = self.summary_model(_input.to_messages())
-            summary += f"\n{output.content}"
-
-        sum_tokens = token_len(input=summary)
-
-        if sum_tokens > LIMIT_TOKENS:
-            return summarize(input=summary)
-
-        return summary
-
-
-
-llm_chain = CustomLLMChain(
-        llm=llm,
-        prompt=partial_prompt,
-        callback_manager = callback_manager,
-        summary_model = llm,
+    # Define multiple tools to make the task more complex
+    tools = [get_text_length, count_vowels, count_words]
+    
+    template = """
+    Answer the following questions as best you can. You have access to the following tools:
+    {tools}
+    
+    Use the following format:
+    
+    Question: the input question you must answer
+    Thought: you should always think about what to do
+    Action: the action to take, should be one of [{tool_names}]
+    Action Input: the input to the action
+    Observation: the result of the action
+    ... (this Thought/Action/Action Input/Observation can repeat N times)
+    Thought: I now know the final answer
+    Final Answer: the final answer to the original input question
+    
+    Begin!
+    
+    Question: {input}
+    {agent_scratchpad}
+    """
+    
+    prompt = PromptTemplate.from_template(template=template).partial(
+        tools=render_text_description(tools),
+        tool_names=", ".join([t.name for t in tools]),
     )
+    
+    azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
+    gpt4_deployment_name = os.getenv("AZURE_DEPLOYMENT_NAME")
+    
+    llm = AzureChatOpenAI(
+        azure_endpoint=azure_endpoint,
+        api_key=azure_api_key,
+        deployment_name=gpt4_deployment_name,
+        temperature=0,
+        stop=["\nObservation", "Observation"]
+    )
+    
+    agent = (
+        {
+            "input": lambda x: x["input"],
+            "agent_scratchpad": lambda x: format_log_to_str(x["agent_scratchpad"]),
+        }
+        | prompt
+        | llm
+        | ReActSingleInputOutputParser()
+    )
+    
+    # Use a more complex question that requires multiple steps
+    complex_question = "Tell me about the sentence 'The quick brown fox jumps over the lazy dog', including its length, vowel count, and word count."
+    
+    final_result = run_agent_with_steps(agent, tools, complex_question)

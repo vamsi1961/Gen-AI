@@ -6,7 +6,6 @@ from langchain_openai import AzureChatOpenAI
 from langchain.agents import create_react_agent, AgentExecutor
 from langchain_experimental.tools import PythonREPLTool
 from langchain.tools import Tool
-from langchain.prompts import PromptTemplate
 
 # Load .env
 load_dotenv()
@@ -26,7 +25,6 @@ def main():
         deployment_name=gpt4_deployment_name,
         temperature=0
     )
-
     # Custom Tool: Executes machine.py
     def execute_machine_py(_):
         try:
@@ -44,57 +42,29 @@ def main():
         description="Runs machine.py using subprocess and returns output or errors."
     )
 
-    python_tool = PythonREPLTool()
-
     # Tools
-    tools = [python_tool, ExecutionTool]
-
-    # Analyzer Agent - with updated prompt that includes required variables
-    analyser_prompt = PromptTemplate.from_template("""
-    You are a data scientist. You have to break down the tasks 
-    1. check wether train.csv exists
-    2. find the number of columns in the file
-        
-    Make sure:
-    - Steps are very fine-grained (1 action per step).
-    - Do not write code.
-    - Start from checking if file exists.
-    - Proceed to data loading only if it exists.
-    - Then proceed to the required computation like printing length.
-    - Give instructions and check so agents write code and tests
-    
-    Available tools:
-    {tools}
-    
-    Tool names: {tool_names}
-    
-    {input}
-    
-    {agent_scratchpad}
-    """)
-    
-    tool_n = ["RunMachinePy" ,"python_repl" ]
-
-    # Now create the analyzer agent with tools
-    analyser_agent = create_react_agent(llm=azure_llm, tools=tools, prompt=analyser_prompt , tool_names = tool_n)
-    analyser_executor = AgentExecutor(agent=analyser_agent, tools=tools, verbose=True, handle_parsing_errors=True)
+    tools = [PythonREPLTool(), ExecutionTool]
 
     # Code Writer Agent
     writer_prompt = hub.pull("langchain-ai/react-agent-template").partial(
         instructions="""You are an agent designed to write Python code based on user requirements.
-        Update the existing code while adding new feature dont delete previous code until new feature requires if you are changing the existing one make sure you test the before features
         You have access to a Python REPL.
         Write clean dont write any comments and save it as machine.py. If machine.py already exists, update it.
         """
     )
+
+
+    print(f"writer_prompt is {writer_prompt}")
+
     writer_agent = create_react_agent(llm=azure_llm, tools=tools, prompt=writer_prompt)
     writer_executor = AgentExecutor(agent=writer_agent, tools=tools, verbose=True, handle_parsing_errors=True)
+
+    
 
     # Code Evaluator Agent
     evaluator_prompt = hub.pull("langchain-ai/react-agent-template").partial(
         instructions="""You are an agent that checks if the code in machine.py works.
         Use the 'RunMachinePy' tool to run it and evaluate its correctness.
-        Make sure you check all required features
         If the code runs without errors, return 'APPROVED'.
         If not, return 'NEEDS REVISION' and describe the problem.
         """
@@ -104,39 +74,34 @@ def main():
 
     # Code generation + evaluation loop
     def process_code_request(user_request):
-        print("\n[ANALYSER AGENT]: Generating fine-grained steps...\n")
-        analysis_result = analyser_executor.invoke({"input": user_request})
-        steps_text = analysis_result["output"]
+        max_iterations = 100
+        for iteration in range(1, max_iterations + 1):
+            print(f"\n===== ITERATION {iteration} =====")
 
-        print("\n[PLAN]:\n", steps_text)
-        steps = [line.strip() for line in steps_text.split("\n") if line.lower().startswith("step")]
-
-        written_code = ""
-        for i, step in enumerate(steps, 1):
-            print(f"\n===== STEP {i}: {step} =====")
-
-            # Writer writes this part
-            print("\n[WRITER AGENT]: Writing code for step...\n")
-            writer_result = writer_executor.invoke({"input": f"Update machine.py to implement: {step}"})
+            print("\n[WRITER AGENT]: Generating code...\n")
+            writer_result = writer_executor.invoke(
+                {"input": f"Write Python code to: {user_request}"}
+            )
             written_code = writer_result["output"]
 
-            # Evaluator runs it
-            print("\n[EVALUATOR AGENT]: Evaluating code...\n")
-            eval_result = evaluator_executor.invoke({"input": f"Check if machine.py correctly implements: {step}"})
+            print("\n[EVALUATOR AGENT]: Running and evaluating machine.py...\n")
+            eval_prompt = f"Check if the code in machine.py works correctly for: {user_request}"
+            eval_result = evaluator_executor.invoke({"input": eval_prompt})
             evaluation = eval_result["output"]
 
             print("\n[EVALUATION RESULT]:\n", evaluation)
 
             if "APPROVED" in evaluation:
-                print("✅ Step approved. Proceeding.\n")
-            else:
-                print("❌ Step failed. Halting pipeline.\n")
-                return {"status": "partial", "step": i, "code": written_code, "evaluation": evaluation}
+                print("\n✅ CODE APPROVED!")
+                return {"status": "success", "code": written_code, "evaluation": evaluation}
 
-        return {"status": "success", "code": written_code, "evaluation": "All steps approved."}
+            print("\n🔁 Code needs revision. Rewriting...")
+
+        print("\n⚠️ Maximum iterations reached. Returning best attempt.")
+        return {"status": "partial", "code": written_code, "evaluation": evaluation}
 
     # Start interaction
-    user_request = "get the numner pf columns in train.csv"
+    user_request = "write a python code for fibonacci series upto 10"
     result = process_code_request(user_request)
 
     if result["status"] in ["success", "partial"]:
