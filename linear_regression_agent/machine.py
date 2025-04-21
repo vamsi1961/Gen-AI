@@ -1,5 +1,10 @@
-import os
-if os.path.exists('train.csv'):
-    print('train.csv exists')
-else:
-    print('train.csv does not exist')
+
+def fibonacci(n):
+    a, b = 0, 1
+    for _ in range(n):
+        yield a
+        a, b = b, a + b
+
+if __name__ == "__main__":
+    for num in fibonacci(10):
+        print(num)

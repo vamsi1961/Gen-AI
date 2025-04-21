@@ -8,6 +8,8 @@ from langchain.prompts import PromptTemplate
 from langchain.schema import AgentAction, AgentFinish
 from langchain.tools import Tool
 from langchain.tools.render import render_text_description
+from langchain_openai import AzureChatOpenAI
+import os
 
 
 load_dotenv()
@@ -62,10 +64,18 @@ if __name__ == "__main__":
         tool_names=", ".join([t.name for t in tools]),
     )
 
-    llm = ChatOpenAI(
+    azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
+    gpt4_deployment_name = os.getenv("AZURE_DEPLOYMENT_NAME")
+
+    llm = AzureChatOpenAI(
+        azure_endpoint=azure_endpoint,
+        api_key=azure_api_key,
+        deployment_name=gpt4_deployment_name,
         temperature=0,
-        stop= ["\nObservation", "Observation"],
+        stop= ["\nObservation", "Observation"]
     )
+
     intermediate_steps = []
     agent = (
         {
@@ -92,13 +102,12 @@ if __name__ == "__main__":
         print(f"{observation=}")
         intermediate_steps.append((agent_step, str(observation)))
 
-    agent_step: Union[AgentAction, AgentFinish] = agent.invoke(
-        {
-            "input": "What is the length of the word: DOG",
-            "agent_scratchpad": intermediate_steps,
-        }
-    )
-    print(agent_step)
+    print(f"agent_step is {agent_step}")
+    print(f"AgentAction is {AgentAction}")
+    print(f"AgentFinish is {AgentFinish}")
+
+
+
     if isinstance(agent_step, AgentFinish):
         print("### AgentFinish ###")
         print(agent_step.return_values)

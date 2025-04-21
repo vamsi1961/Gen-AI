@@ -27,28 +27,6 @@ def main():
         temperature=0
     )
 
-    analyser_prompt = PromptTemplate.from_template("""
-        You are a data scientist. You have to break down the tasks into pre-processing, code and post processing.
-        
-        In pre-processing you have to write code and check 
-            1. if any null value is there
-            2. correlation what can be done
-            
-        Make sure:
-        - Steps are very fine-grained (1 action per step).
-        - Do not write code.
-        - Start from checking if file exists.
-        - Proceed to data loading only if it exists.
-        - Then proceed to the required computation like printing length.
-        - Give instructions and check so agents write code and tests 
-
-        {input}
-        """)
-    analyser_agent = create_react_agent(llm=azure_llm, tools=[], prompt=analyser_prompt)
-    analyser_executor = AgentExecutor(agent=analyser_agent, tools=[], verbose=True,handle_parsing_errors=True)
-
-
-
     # Custom Tool: Executes machine.py
     def execute_machine_py(_):
         try:
@@ -66,13 +44,45 @@ def main():
         description="Runs machine.py using subprocess and returns output or errors."
     )
 
-    # Tools
-    tools = [PythonREPLTool(), ExecutionTool]
+    python_tool = PythonREPLTool()
 
+    # Tools
+    tools = [python_tool, ExecutionTool]
+
+    # Analyzer Agent - with updated prompt that includes required variables
+    analyser_prompt = PromptTemplate.from_template("""
+    You are a data scientist. You have to break down the tasks 
+    1. check wether train.csv exists
+    2. find the number of columns in the file
+        
+    Make sure:
+    - Steps are very fine-grained (1 action per step).
+    - Do not write code.
+    - Start from checking if file exists.
+    - Proceed to data loading only if it exists.
+    - Then proceed to the required computation like printing length.
+    - Give instructions and check so agents write code and tests
+    
+    Available tools:
+    {tools}
+    
+    Tool names: {tool_names}
+    
+    {input}
+    
+    {agent_scratchpad}
+    """)
+    
+    tool_n = ["RunMachinePy" ,"python_repl" ]
+
+    # Now create the analyzer agent with tools
+    analyser_agent = create_react_agent(llm=azure_llm, tools=tools, prompt=analyser_prompt , tool_names = tool_n)
+    analyser_executor = AgentExecutor(agent=analyser_agent, tools=tools, verbose=True, handle_parsing_errors=True)
 
     # Code Writer Agent
     writer_prompt = hub.pull("langchain-ai/react-agent-template").partial(
         instructions="""You are an agent designed to write Python code based on user requirements.
+        Update the existing code while adding new feature dont delete previous code until new feature requires if you are changing the existing one make sure you test the before features
         You have access to a Python REPL.
         Write clean dont write any comments and save it as machine.py. If machine.py already exists, update it.
         """
@@ -80,12 +90,11 @@ def main():
     writer_agent = create_react_agent(llm=azure_llm, tools=tools, prompt=writer_prompt)
     writer_executor = AgentExecutor(agent=writer_agent, tools=tools, verbose=True, handle_parsing_errors=True)
 
-    
-
     # Code Evaluator Agent
     evaluator_prompt = hub.pull("langchain-ai/react-agent-template").partial(
         instructions="""You are an agent that checks if the code in machine.py works.
         Use the 'RunMachinePy' tool to run it and evaluate its correctness.
+        Make sure you check all required features
         If the code runs without errors, return 'APPROVED'.
         If not, return 'NEEDS REVISION' and describe the problem.
         """
@@ -127,7 +136,7 @@ def main():
         return {"status": "success", "code": written_code, "evaluation": "All steps approved."}
 
     # Start interaction
-    user_request = input("\nWhat application would you like me to create? ")
+    user_request = "get the numner pf columns in train.csv"
     result = process_code_request(user_request)
 
     if result["status"] in ["success", "partial"]:

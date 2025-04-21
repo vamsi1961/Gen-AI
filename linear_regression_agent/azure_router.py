@@ -52,6 +52,10 @@ def main():
         Write clean dont write any comments and save it as machine.py. If machine.py already exists, update it.
         """
     )
+
+
+    print(f"writer_prompt is {writer_prompt}")
+
     writer_agent = create_react_agent(llm=azure_llm, tools=tools, prompt=writer_prompt)
     writer_executor = AgentExecutor(agent=writer_agent, tools=tools, verbose=True, handle_parsing_errors=True)
 
@@ -97,7 +101,7 @@ def main():
         return {"status": "partial", "code": written_code, "evaluation": evaluation}
 
     # Start interaction
-    user_request = input("\nWhat application would you like me to create? ")
+    user_request = "write a python code for fibonacci series upto 10"
     result = process_code_request(user_request)
 
     if result["status"] in ["success", "partial"]:
