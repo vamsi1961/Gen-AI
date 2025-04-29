@@ -17,7 +17,6 @@ from typing import Union, List, Dict, Any
 # Load .env
 load_dotenv()
 
-
 def main():
     print("Starting AI Code Assistant...")
 
@@ -62,7 +61,7 @@ def main():
         """
     )
 
-
+    # tools = [PythonREPLTool()]
     print(f"writer_prompt is {writer_prompt}")
 
     writer_agent = create_react_agent(llm=azure_llm, tools=tools, prompt=writer_prompt)
@@ -82,6 +81,7 @@ def main():
         If not, return 'NEEDS REVISION' and describe the problem.
         """
     )
+    # tools = [ExecutionTool]
     evaluator_agent = create_react_agent(llm=azure_llm, tools=tools, prompt=evaluator_prompt)
     evaluator_executor = AgentExecutor(agent=evaluator_agent, tools=tools, verbose=True, handle_parsing_errors=True)
 
@@ -107,7 +107,7 @@ def main():
     Action Input: the input to the action
     Observation: the result of the action
     ... (this Thought/Action/Action Input/Observation can repeat N times)
-    Thought: If the EvaluationTool says code is APPROVED then only you have to confirm that code is good.
+    Thought: If the EvaluationTool says code is APPROVED then only you have to confirm that code is good.After wrtiting the code using WriterTool you have to use EvaluationTool to check if it correct or not
     Final Answer: the final answer to the original input question
     
     Begin!
@@ -187,4 +187,5 @@ def main():
     print("\n💾 Code is good")
 
 if __name__ == "__main__":
+    
     main()
