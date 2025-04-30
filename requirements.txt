@@ -1,9 +1,4 @@
-absl-py==2.1.0
-acres==0.3.0
-action-msgs==1.2.1
-action-tutorials-interfaces==0.20.5
-action-tutorials-py==0.20.5
-actionlib-msgs==4.8.0
+
 aiofiles==23.2.1
 aiohappyeyeballs==2.6.1
 aiohttp==3.11.17
