@@ -59,25 +59,6 @@ class Plan(BaseModel):
     )
 
 
-planner_prompt = ChatPromptTemplate.from_messages(
-    [
-        (
-            "system",
-            """For given ibjective you have to plan step by step. make sure you give clear steps, 
-            you steps are taken by writer tool it writes the code and then evaluationtool evaluates it if is evaluated properly then you have to go to next step
-            write concise steps dont write unnecessary matter just what to do
-            """,
-        ),
-        ("placeholder", "{messages}"),
-    ]
-)
-planner = planner_prompt | llm.with_structured_output(Plan)
-planner.invoke(
-    {
-        "messages": [ ("user", "what is the hometown of the current Australia open winner?") ]
-    }
-)
-
 class Response(BaseModel):
     """Response to user."""
 
@@ -124,7 +105,6 @@ async def execute_step(state: PlanExecute):
     return {
         "past_steps": [(task, agent_response["messages"][-1].content)],
     }
-
 
 async def plan_step(state: PlanExecute):
 
@@ -174,13 +154,29 @@ workflow.add_conditional_edges(
     ["agent", END],
 )
 
-# Finally, we compile it!
-# This compiles it into a LangChain Runnable,
-# meaning you can use it as you would any other runnable
-
 app = workflow.compile()
 
 display(Image(app.get_graph(xray=True).draw_mermaid_png()))
+
+planner_prompt = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            """For given ibjective you have to plan step by step. make sure you give clear steps, 
+            you steps are taken by writer tool it writes the code and then evaluationtool evaluates it if is evaluated properly then you have to go to next step
+            write concise steps dont write unnecessary matter just what to do
+            """,
+        ),
+        ("placeholder", "{messages}"),
+    ]
+)
+planner = planner_prompt | llm.with_structured_output(Plan)
+planner.invoke(
+    {
+        "messages": [ ("user", "what is the hometown of the current Australia open winner?") ]
+    }
+)
+
 
 config = {"recursion_limit": 50}
 inputs = {"input": "what is the hometown of the current Australia open winner?"}

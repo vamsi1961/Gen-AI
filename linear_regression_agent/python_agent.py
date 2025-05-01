@@ -95,7 +95,7 @@ def main():
         ```python
         {existing_code}
         ```
-        Dont test the code using PythonRePL tool. See what you can add to meet the requirements
+        Only Test the code using PythonRePL tool dont test the final code. See what you can add to meet the requirements if you have to remove it to meet requirements then remove it
         Modify the existing code to meet the new requirements rather than writing from scratch.
         Only make necessary changes to fulfill the requirements.
         Once you have the code working, use the WriteToFile tool to save it.
@@ -202,7 +202,7 @@ def main():
         return None
 
     # Start interaction
-    user_request = "write a python code for fibonacci series upto 10 and print hello world"
+    user_request = "write a code to add 2 numbers by taking input and then do logarithm of the result do step by step "
     result = run_agent_with_steps(agent, tools, user_request)
     print(result)
 
