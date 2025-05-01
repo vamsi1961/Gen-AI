@@ -36,7 +36,10 @@ def main():
     # Custom Tool: Executes machine.py
     def execute_machine_py(_):
         try:
+            print("Running machine.py ...")
             result = subprocess.run(["python", "machine.py"], capture_output=True, text=True, timeout=10)
+            print(f"STDOUT:\n{result.stdout}")
+            print(f"STDERR:\n{result.stderr}")
             if result.returncode == 0:
                 return f"APPROVED - machine.py ran successfully.\nOutput:\n{result.stdout.strip()}"
             else:
@@ -51,17 +54,36 @@ def main():
     )
 
     # Tools
-    
-    tools = [PythonREPLTool(), ExecutionTool]
+
+    def write_to_machine_py(code: str) -> str:
+        try:
+            with open("machine.py", "w") as f:
+                f.write(code)
+            return "machine.py updated successfully."
+        except Exception as e:
+            return f"Failed to update machine.py: {str(e)}"
+
+    FileWriteTool = Tool(
+        name="WriteToFile",
+        func=write_to_machine_py,
+        description="Writes the provided Python code to machine.py file. Input should be valid Python code as a string."
+    )
+        
+    tools = [PythonREPLTool(), ExecutionTool,FileWriteTool]
     # Code Writer Agent
     writer_prompt = hub.pull("langchain-ai/react-agent-template").partial(
-        instructions="""You are an agent designed to write Python code based on user requirements.
-        You have access to a Python REPL.
-        Write clean dont write any comments and save it as machine.py. If machine.py already exists, update it.
-        """
-    )
+            instructions="""
+            You are an agent designed to write Python code based on user requirements.
+            First, write clean Python code using the Python REPL tool to test it (if needed).
+            Do NOT include ```python or ``` markers — write only valid raw Python code.
+            Do not explain, do not comment, do not return markdown.
+            Once finalized, use the WriteToFile tool to write the complete code into machine.py.
+            Always overwrite machine.py with the final version.
+            Avoid using comments.
+            """
+        )
 
-    # tools = [PythonREPLTool()]
+    tools = [PythonREPLTool(),FileWriteTool]
     print(f"writer_prompt is {writer_prompt}")
 
     writer_agent = create_react_agent(llm=azure_llm, tools=tools, prompt=writer_prompt)
@@ -75,13 +97,13 @@ def main():
 
     # Code Evaluator Agent
     evaluator_prompt = hub.pull("langchain-ai/react-agent-template").partial(
-        instructions="""You are an agent that checks if the code in machine.py works.
-        Use the 'RunMachinePy' tool to run it and evaluate its correctness.
-        If the code runs without errors, return 'APPROVED'.
-        If not, return 'NEEDS REVISION' and describe the problem.
-        """
+        instructions="""
+            Your only job is to run the Python script 'machine.py' using the 'RunMachinePy' tool.
+            If it runs successfully without errors, return ONLY the string 'APPROVED'.
+            If it fails, return ONLY 'NEEDS REVISION' followed by a short reason.
+            """
     )
-    # tools = [ExecutionTool]
+    tools = [ExecutionTool]
     evaluator_agent = create_react_agent(llm=azure_llm, tools=tools, prompt=evaluator_prompt)
     evaluator_executor = AgentExecutor(agent=evaluator_agent, tools=tools, verbose=True, handle_parsing_errors=True)
 
@@ -189,5 +211,3 @@ def main():
 if __name__ == "__main__":
     
     main()
-
-"https://chatgpt.com/share/68111baf-edc8-800a-b2e6-824df2e9157d"

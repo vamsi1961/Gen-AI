@@ -184,7 +184,7 @@ def main():
     result = run_agent_with_steps(agent, tools, user_request)
     print(result)
 
-    print("\n💾 Code is good")
+    print("\n Code is good")
 
 if __name__ == "__main__":
     

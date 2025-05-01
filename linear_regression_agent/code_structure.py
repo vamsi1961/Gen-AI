@@ -1,232 +1,213 @@
+from dotenv import load_dotenv
 import os
 import subprocess
-from langgraph.prebuilt import create_react_agent
-from langchain_openai import AzureChatOpenAI
-from dotenv import load_dotenv
-import operator
-from typing import Annotated, List, Tuple
-from typing_extensions import TypedDict
-from pydantic import BaseModel, Field
-from langchain_core.prompts import ChatPromptTemplate
-from typing import Union
-from typing import Literal
-from langgraph.graph import END
-from langgraph.graph import StateGraph, START
-from IPython.display import Image, display
-import asyncio
-from langchain_community.tools.tavily_search import TavilySearchResults
-from langchain.tools import Tool
-from langchain.agents import create_react_agent, AgentExecutor
 from langchain import hub
+from langchain_openai import AzureChatOpenAI
+from langchain.agents import create_react_agent, AgentExecutor
+from langchain_experimental.tools import PythonREPLTool
+from langchain.tools import Tool
+from langchain.agents.format_scratchpad import format_log_to_str
+from langchain.prompts import PromptTemplate
+from langchain.agents.output_parsers import ReActSingleInputOutputParser
+from langchain.tools.render import render_text_description
+from langchain.schema import AgentAction, AgentFinish
+from typing import Union, List, Dict, Any
 
+
+# Load .env
 load_dotenv()
 
+def main():
+    print("Starting AI Code Assistant...")
 
-azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
-gpt4_deployment_name = os.getenv("AZURE_DEPLOYMENT_NAME")
-
-os.environ["LANGCHAIN_TRACING_V2"] = "false"    # Your code that triggers the error, e.g., a LangChain run
-os.environ["LANGCHAIN_ENDPOINT"]="https://api.smith.langchain.com"
-
-
-
-load_dotenv()
-llm = AzureChatOpenAI(
+    # Configure Azure OpenAI
+    azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
+    gpt4_deployment_name = os.getenv("AZURE_DEPLOYMENT_NAME")
+    os.environ["LANGCHAIN_TRACING_V2"] = "false"
+    print(" I am good")
+    azure_llm = AzureChatOpenAI(
         azure_endpoint=azure_endpoint,
         api_key=azure_api_key,
         deployment_name=gpt4_deployment_name,
-        api_version="2024-08-01-preview",
         temperature=0
     )
+    print("I am perfect")
+    # Custom Tool: Executes machine.py
+    def execute_machine_py(_):
+        try:
+            print("Running machine.py ...")
+            result = subprocess.run(["python", "machine.py"], capture_output=True, text=True, timeout=10)
+            print(f"STDOUT:\n{result.stdout}")
+            print(f"STDERR:\n{result.stderr}")
+            if result.returncode == 0:
+                return f"APPROVED - machine.py ran successfully.\nOutput:\n{result.stdout.strip()}"
+            else:
+                return f"NEEDS REVISION - machine.py failed.\nErrors:\n{result.stderr.strip()}"
+        except subprocess.TimeoutExpired:
+            return "NEEDS REVISION - machine.py timed out during execution."
 
-tools = [TavilySearchResults(max_results=3)]
-
-def execute_machine_py(_):
-    try:
-        result = subprocess.run(["python", "machine.py"], capture_output=True, text=True, timeout=10)
-        if result.returncode == 0:
-            return f"APPROVED - machine.py ran successfully.\nOutput:\n{result.stdout.strip()}"
-        else:
-            return f"NEEDS REVISION - machine.py failed.\nErrors:\n{result.stderr.strip()}"
-    except subprocess.TimeoutExpired:
-        return "NEEDS REVISION - machine.py timed out during execution."
-
-ExecutionTool = Tool(
-    name="RunMachinePy",
-    func=execute_machine_py,
-    description="Runs machine.py using subprocess and returns output or errors."
-)
-
-writer_prompt = hub.pull("langchain-ai/react-agent-template").partial(
-    instructions="""You are an agent designed to write Python code based on user requirements.
-    You have access to a Python REPL.
-    Write clean dont write any comments and save it as machine.py. If machine.py already exists, update it.
-    """
-)
-
-writer_agent = create_react_agent(llm=llm, tools=tools, prompt=writer_prompt)
-writer_executor = AgentExecutor(agent=writer_agent, tools=tools, verbose=True, handle_parsing_errors=True)
-
-WriterTool = Tool(
-        name="WriterAgent",
-        func=lambda input_text: writer_executor.invoke({"input": input_text})["output"],
-        description="Writes or updates machine.py with Python code based on the input prompt."
+    ExecutionTool = Tool(
+        name="RunMachinePy",
+        func=execute_machine_py,
+        description="Runs machine.py using subprocess and returns output or errors."
     )
 
+    # Tools
 
-# Choose the LLM that will drive the agent
-prompt = "You are a helpful assistant."
-agent_executor = create_react_agent(llm, tools, prompt=prompt)
+    def write_to_machine_py(code: str) -> str:
+        try:
+            with open("machine.py", "w") as f:
+                f.write(code)
+            return "machine.py updated successfully."
+        except Exception as e:
+            return f"Failed to update machine.py: {str(e)}"
 
-
-class PlanExecute(TypedDict):
-    input: str
-    plan: List[str]
-    past_steps: Annotated[List[Tuple], operator.add]
-    response: str
-
-class Plan(BaseModel):
-    """Plan to follow in future"""
-
-    steps: List[str] = Field(
-        description="different steps to follow, should be in sorted order"
+    FileWriteTool = Tool(
+        name="WriteToFile",
+        func=write_to_machine_py,
+        description="Writes the provided Python code to machine.py file. Input should be valid Python code as a string."
     )
+        
+    tools = [PythonREPLTool(), ExecutionTool,FileWriteTool]
+    # Code Writer Agent
+    writer_prompt = hub.pull("langchain-ai/react-agent-template").partial(
+            instructions="""
+            You are an agent designed to write Python code based on user requirements.
+            First, write clean Python code using the Python REPL tool to test it (if needed).
+            Do NOT include ```python or ``` markers — write only valid raw Python code.
+            Do not explain, do not comment, do not return markdown.
+            Once finalized, use the WriteToFile tool to write the complete code into machine.py.
+            Always overwrite machine.py with the final version.
+            Avoid using comments.
+            """
+        )
 
+    tools = [PythonREPLTool(),FileWriteTool]
+    print(f"writer_prompt is {writer_prompt}")
 
-planner_prompt = ChatPromptTemplate.from_messages(
-    [
-        (
-            "system",
-            """For given ibjective you have to plan step by step. make sure you give clear steps, 
-            you steps are taken by writer tool it writes the code and then evaluationtool evaluates it if is evaluated properly then you have to go to next step
-            write concise steps dont write unnecessary matter just what to do
-            """,
-        ),
-        ("placeholder", "{messages}"),
-    ]
-)
-planner = planner_prompt | llm.with_structured_output(Plan)
-planner.invoke(
-    {
-        "messages": [ ("user", "what is the hometown of the current Australia open winner?") ]
-    }
-)
+    writer_agent = create_react_agent(llm=azure_llm, tools=tools, prompt=writer_prompt)
+    writer_executor = AgentExecutor(agent=writer_agent, tools=tools, verbose=True, handle_parsing_errors=True)
 
-class Response(BaseModel):
-    """Response to user."""
+    WriterTool = Tool(
+            name="WriterAgent",
+            func=lambda input_text: writer_executor.invoke({"input": input_text})["output"],
+            description="Writes or updates machine.py with Python code based on the input prompt."
+        )
 
-    response: str
-
-
-class Act(BaseModel):
-    """Action to perform."""
-
-    action: Union[Response, Plan] = Field(
-        description="Action to perform. If you want to respond to user, use Response. "
-        "If you need to further use tools to get the answer, use Plan."
+    # Code Evaluator Agent
+    evaluator_prompt = hub.pull("langchain-ai/react-agent-template").partial(
+        instructions="""
+            Your only job is to run the Python script 'machine.py' using the 'RunMachinePy' tool.
+            If it runs successfully without errors, return ONLY the string 'APPROVED'.
+            If it fails, return ONLY 'NEEDS REVISION' followed by a short reason.
+            """
     )
+    tools = [ExecutionTool]
+    evaluator_agent = create_react_agent(llm=azure_llm, tools=tools, prompt=evaluator_prompt)
+    evaluator_executor = AgentExecutor(agent=evaluator_agent, tools=tools, verbose=True, handle_parsing_errors=True)
 
 
-replanner_prompt = ChatPromptTemplate.from_template(
-    """For the given objective, come up with a simple step by step plan.For the given objective, You have to give plan to write a code to wroter agent so give simple steps that agent should understnad what to do 
-      come up with a simple step by step plan. 
-This plan should involve individual tasks, that if executed correctly will yield the correct answer. Do not add any superfluous steps. 
-The result of the final step should be the final answer. Make sure that each step has all the information needed - do not skip steps.
-
-Your objective was this: {input}
-
-Your original plan was this: {plan}
-
-You have currently done the follow steps: {past_steps}
-
-Update your plan accordingly. If no more steps are needed and you can return to the user, then respond with that. Otherwise, fill out the plan. Only add steps to the plan that still NEED to be done. Do not return previously done steps as part of the plan."""
+    EvaluationTool = Tool(
+    name="EvaluationAgent",
+    func=lambda input_text: evaluator_executor.invoke({"input": input_text}),
+    description="execute the funtion and pass the message"
 )
-
-
-replanner = replanner_prompt | llm.with_structured_output(Act)
-
-async def execute_step(state: PlanExecute):
-    plan = state["plan"]
-    plan_str = "\n".join(f"{i+1}. {step}" for i, step in enumerate(plan))
-    task = plan[0]
-    task_formatted = f"""For the following plan: {plan_str}\n\n You are tasked with executing step {1}, {task}."""
     
-    agent_response = await agent_executor.ainvoke(
-        {"messages": [("user", task_formatted)]}
+
+    tools = [WriterTool, EvaluationTool]
+
+    template = """
+    Answer the following questions as best you can. You have access to the following tools:
+    {tools}
+    
+    Use the following format:
+    
+    Question: the input question you must answer
+    Thought: you should always think about what to do
+    Action: the action to take, should be one of [{tool_names}]
+    Action Input: the input to the action
+    Observation: the result of the action
+    ... (this Thought/Action/Action Input/Observation can repeat N times)
+    Thought: If the EvaluationTool says code is APPROVED then only you have to confirm that code is good.After wrtiting the code using WriterTool you have to use EvaluationTool to check if it correct or not
+    Final Answer: the final answer to the original input question
+    
+    Begin!
+    
+    Question: {input}
+    {agent_scratchpad}
+    """
+    
+    prompt = PromptTemplate.from_template(template=template).partial(
+        tools=render_text_description(tools),
+        tool_names=", ".join([t.name for t in tools]),
     )
 
-    return {
-        "past_steps": [(task, agent_response["messages"][-1].content)],
-    }
+    llm = AzureChatOpenAI(
+        azure_endpoint=azure_endpoint,
+        api_key=azure_api_key,
+        deployment_name=gpt4_deployment_name,
+        temperature=0,
+        stop=["\nObservation", "Observation"]
+    )
+    
+    agent = (
+        {
+            "input": lambda x: x["input"],
+            "agent_scratchpad": lambda x: format_log_to_str(x["agent_scratchpad"]),
+        }
+        | prompt
+        | llm
+        | ReActSingleInputOutputParser()
+    )
+    def find_tool_by_name(tools: List[Tool], tool_name: str) -> Tool:
+        for tool in tools:
+            if tool.name == tool_name:
+                return tool
+        raise ValueError(f"Tool with name {tool_name} not found")
 
 
-async def plan_step(state: PlanExecute):
+    # Code generation + evaluation loop
+    def run_agent_with_steps(agent, tools, input_text: str, max_iterations: int = 10):
+        """Run the agent for multiple iterations until it reaches a final answer or max iterations"""
+        intermediate_steps = []
+        
+        for i in range(max_iterations):
+            print(f"\n--- Iteration {i+1} ---")
+            agent_step = agent.invoke(
+                {
+                    "input": input_text,
+                    "agent_scratchpad": intermediate_steps,
+                }
+            )
+            
+            print(f"Agent output: {agent_step}")
+            
+            if isinstance(agent_step, AgentFinish):
+                print("### Agent Finished ###")
+                print(f"Final Answer: {agent_step.return_values['output']}")
+                return agent_step
+                
+            if isinstance(agent_step, AgentAction):
+                tool_name = agent_step.tool
+                print(f"Selected tool: {tool_name}")
+                tool_to_use = find_tool_by_name(tools, tool_name)
+                tool_input = agent_step.tool_input
+                observation = tool_to_use.func(str(tool_input))
+                print(f"Observation: {observation}")
+                intermediate_steps.append((agent_step, str(observation)))
+                print(f"intermediate_steps is {intermediate_steps}")
+            
+        print("Reached maximum iterations without finishing")
+        return None
 
-    plan = await planner.ainvoke({"messages": [("user", state["input"])]})
+    # Start interaction
+    user_request = "write a python code for fibonacci series upto 10 and also write print hello world program do step by step update the code "
+    result = run_agent_with_steps(agent, tools, user_request)
+    print(result)
 
-    return {"plan": plan.steps}
+    print("\n💾 Code is good")
 
-
-async def replan_step(state: PlanExecute):
-    output = await replanner.ainvoke(state)
-    if isinstance(output.action, Response):
-        return {"response": output.action.response}
-    else:
-        return {"plan": output.action.steps}
-
-
-def should_end(state: PlanExecute):
-    if "response" in state and state["response"]:
-        return END
-    else:
-        return "agent"
-
-workflow = StateGraph(PlanExecute)
-
-# Add the plan node
-workflow.add_node("planner", plan_step)
-
-# Add the execution step
-workflow.add_node("agent", execute_step)
-
-# Add a replan node
-workflow.add_node("replan", replan_step)
-
-workflow.add_edge(START, "planner")
-
-# From plan we go to agent
-workflow.add_edge("planner", "agent")
-
-# From agent, we replan
-
-workflow.add_edge("agent", "replan")
-
-workflow.add_conditional_edges(
-    "replan",
-    # Next, we pass in the function that will determine which node is called next.
-    should_end,
-    ["agent", END],
-)
-
-# Finally, we compile it!
-# This compiles it into a LangChain Runnable,
-# meaning you can use it as you would any other runnable
-
-app = workflow.compile()
-
-display(Image(app.get_graph(xray=True).draw_mermaid_png()))
-
-config = {"recursion_limit": 50}
-inputs = {"input": "what is the hometown of the current Australia open winner?"}
-
-async def main():
-    async for event in app.astream(inputs, config=config):
-        for k, v in event.items():
-            if k != "__end__":
-                print("........")
-                print(v)
-
-asyncio.run(main())
-
-
+if __name__ == "__main__":
+    
+    main()
