@@ -44,7 +44,18 @@ def main():
                 code = code[3:-3]
             elif code.startswith("```") and code.endswith("```"):
                 code = code[3:-3]
+            # Properly handle markdown code blocks
+
+            if code.startswith("```python") and code.endswith("```"):
+                code = code[len("```python"):-3].strip()
+            elif code.startswith("```") and code.endswith("```"):
+                code = code[3:-3].strip()
             
+            # Ensure no language identifier at start of file
+            code_lines = code.strip().split('\n')
+            if code_lines and code_lines[0].strip() == 'python':
+                code = '\n'.join(code_lines[1:])
+
             # Optionally strip a trailing quote if one got appended wrongly
             code = code.rstrip('"\'')
 

@@ -1,18 +1,25 @@
 import math
 
-# Function to add two numbers and calculate the logarithm of the result
-def add_and_logarithm(num1, num2):
-    result = num1 + num2
-    if result > 0:
-        log_result = math.log(result)
-        return log_result
-    else:
-        return "Logarithm undefined for non-positive numbers."
+def add_and_log(number1, number2):
+    try:
+        # Step 2: Add the two numbers
+        result = number1 + number2
 
-# Predefined numbers for testing
+        # Step 3: Ensure the result is positive for logarithm calculation
+        if result <= 0:
+            raise ValueError("The sum must be positive to calculate its logarithm.")
+
+        # Step 4: Calculate the logarithm of the result
+        log_result = math.log(result)
+
+        # Step 5: Return the result and its logarithm
+        return result, log_result
+
+    except ValueError as e:
+        return str(e)
+
+# Example usage with predefined values
 number1 = 5.0
 number2 = 3.0
-
-# Calculate and print the logarithm of their sum
-logarithm_result = add_and_logarithm(number1, number2)
-print("The logarithm of the sum is:", logarithm_result)
+result, log_result = add_and_log(number1, number2)
+print(f"The sum is {result} and the logarithm of the sum is {log_result}")
