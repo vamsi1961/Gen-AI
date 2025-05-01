@@ -42,6 +42,8 @@ def main():
                 code = code[3:-3]
             elif code.startswith("'''") and code.endswith("'''"):
                 code = code[3:-3]
+            elif code.startswith("```") and code.endswith("```"):
+                code = code[3:-3]
             
             # Optionally strip a trailing quote if one got appended wrongly
             code = code.rstrip('"\'')
@@ -71,17 +73,42 @@ def main():
         
     tools = [PythonREPLTool(), FileWriteTool]
     # Code Writer Agent
+    def read_existing_code() -> str:
+        """Read the content of machine.py if it exists."""
+        try:
+            if os.path.exists("machine.py"):
+                with open("machine.py", "r") as f:
+                    return f.read()
+            return "No existing code found."
+        except Exception as e:
+            return f"Error reading machine.py: {str(e)}"
+
+    # Get the existing code
+    existing_code = read_existing_code()
+    print(f"Existing code found: {'Yes' if existing_code != 'No existing code found.' else 'No'}")
+    
+    instructions = f"""
+        You are an agent designed to write Python code based on user requirements.
+        
+        Here is the EXISTING CODE from machine.py that you should use as your starting point:
+        
+        ```python
+        {existing_code}
+        ```
+        Dont test the code using PythonRePL tool. See what you can add to meet the requirements
+        Modify the existing code to meet the new requirements rather than writing from scratch.
+        Only make necessary changes to fulfill the requirements.
+        Once you have the code working, use the WriteToFile tool to save it.
+        
+        Do NOT include ```python or ``` markers in your final answer - write only valid raw Python code.
+        """
+        
+    # Code Writer Agent with embedded existing code
     writer_prompt = hub.pull("langchain-ai/react-agent-template").partial(
-            instructions="""
-            You are an agent designed to write Python code based on user requirements.
-            Write clean Python code using Python REPL to test it (if needed).
-            Do NOT include ```python or ``` markers — write only valid raw Python code.
-            Do not explain, do not comment, do not return markdown.
-            Once finalized, use the WriteToFile tool to overwrite machine.py with the updated version.
-            Always include **all** code, not just what changed.
-            Avoid using comments.
-            """
+            instructions=instructions
         )
+
+
 
     print(f"writer_prompt is {writer_prompt}")
 

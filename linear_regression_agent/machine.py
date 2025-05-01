@@ -1,8 +1,10 @@
 # Function to generate Fibonacci series up to the 10th number
 def fibonacci_series(n):
-    series = [0, 1]
+    series = []
+    a, b = 0, 1
     while len(series) < n:
-        series.append(series[-1] + series[-2])
+        series.append(a)
+        a, b = b, a + b
     return series
 
 # Generate Fibonacci series up to the 10th number
