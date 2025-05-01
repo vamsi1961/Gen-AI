@@ -1,10 +1,10 @@
 
 def fibonacci_series(n):
-    series = [0, 1]
-    while len(series) < n:
-        series.append(series[-1] + series[-2])
+    series = []
+    a, b = 0, 1
+    for _ in range(n):
+        series.append(a)
+        a, b = b, a + b
     return series
 
 fibonacci_series(10)
-
-print("Hello World")

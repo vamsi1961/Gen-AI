@@ -1,5 +1,6 @@
 import os
-import subprocess
+
+
 from langgraph.prebuilt import create_react_agent
 from langchain_openai import AzureChatOpenAI
 from dotenv import load_dotenv
@@ -15,9 +16,6 @@ from langgraph.graph import StateGraph, START
 from IPython.display import Image, display
 import asyncio
 from langchain_community.tools.tavily_search import TavilySearchResults
-from langchain.tools import Tool
-from langchain.agents import create_react_agent, AgentExecutor
-from langchain import hub
 
 load_dotenv()
 
@@ -41,39 +39,6 @@ llm = AzureChatOpenAI(
     )
 
 tools = [TavilySearchResults(max_results=3)]
-
-def execute_machine_py(_):
-    try:
-        result = subprocess.run(["python", "machine.py"], capture_output=True, text=True, timeout=10)
-        if result.returncode == 0:
-            return f"APPROVED - machine.py ran successfully.\nOutput:\n{result.stdout.strip()}"
-        else:
-            return f"NEEDS REVISION - machine.py failed.\nErrors:\n{result.stderr.strip()}"
-    except subprocess.TimeoutExpired:
-        return "NEEDS REVISION - machine.py timed out during execution."
-
-ExecutionTool = Tool(
-    name="RunMachinePy",
-    func=execute_machine_py,
-    description="Runs machine.py using subprocess and returns output or errors."
-)
-
-writer_prompt = hub.pull("langchain-ai/react-agent-template").partial(
-    instructions="""You are an agent designed to write Python code based on user requirements.
-    You have access to a Python REPL.
-    Write clean dont write any comments and save it as machine.py. If machine.py already exists, update it.
-    """
-)
-
-writer_agent = create_react_agent(llm=llm, tools=tools, prompt=writer_prompt)
-writer_executor = AgentExecutor(agent=writer_agent, tools=tools, verbose=True, handle_parsing_errors=True)
-
-WriterTool = Tool(
-        name="WriterAgent",
-        func=lambda input_text: writer_executor.invoke({"input": input_text})["output"],
-        description="Writes or updates machine.py with Python code based on the input prompt."
-    )
-
 
 # Choose the LLM that will drive the agent
 prompt = "You are a helpful assistant."
