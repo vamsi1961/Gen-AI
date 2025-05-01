@@ -15,6 +15,9 @@ def main():
     
     # Make sure to set these deployment names in your Azure OpenAI service
     gpt4_deployment_name = os.getenv("AZURE_DEPLOYMENT_NAME")
+    # Disable LangChain tracing
+    os.environ["LANGCHAIN_TRACING_V2"] = "false"
+    os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com"
 
 
     azure_llm = AzureChatOpenAI(
@@ -23,13 +26,11 @@ def main():
         deployment_name=gpt4_deployment_name,
         temperature=0
     )
-    tools = [PythonREPLTool()]
     csv_agent = create_csv_agent(
         llm=azure_llm,
         path="episode_info.csv",
         verbose=True,
         allow_dangerous_code=True,
-        tools = tools
     )
 
     csv_agent.invoke(

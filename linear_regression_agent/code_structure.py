@@ -13,53 +13,53 @@ from typing import Union
 from langchain.tools import Tool
 from langgraph.graph import END
 from langgraph.graph import StateGraph, START
-from IPython.display import Image, display
 import asyncio
 from langchain_community.tools.tavily_search import TavilySearchResults
 
+# Load environment variables
 load_dotenv()
 
-
+# Configure Azure OpenAI
 azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
 azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
 gpt4_deployment_name = os.getenv("AZURE_DEPLOYMENT_NAME")
 
-os.environ["LANGCHAIN_TRACING_V2"] = "false"    # Your code that triggers the error, e.g., a LangChain run
-os.environ["LANGCHAIN_ENDPOINT"]="https://api.smith.langchain.com"
+# Disable LangChain tracing
+os.environ["LANGCHAIN_TRACING_V2"] = "false"
+os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com"
 
-
-
-load_dotenv()
+# Initialize Azure OpenAI LLM
 llm = AzureChatOpenAI(
-        azure_endpoint=azure_endpoint,
-        api_key=azure_api_key,
-        deployment_name=gpt4_deployment_name,
-        api_version="2024-08-01-preview",
-        temperature=0
-    )
+    azure_endpoint=azure_endpoint,
+    api_key=azure_api_key,
+    deployment_name=gpt4_deployment_name,
+    api_version="2024-08-01-preview",
+    temperature=0
+)
 
-tools = [TavilySearchResults(max_results=3)]
-
-# Choose the LLM that will drive the agent
-
-tools = [PythonREPLTool()]
+# Create CSV agent - Fix: Remove the 'tools' parameter that causes the warning
 csv_agent = create_csv_agent(
     llm=llm,
     path="episode_info.csv",
     verbose=True,
-    allow_dangerous_code=True,
-    tools = tools
+    allow_dangerous_code=True
 )
 
+# Create a tool from the CSV agent
 csv_tool = Tool(
-        name="CSVAgent",
-        func=lambda input_text: csv_agent.invoke({"input": input_text})["output"],
-        description="Write csv code and execut based on requirement."
-    )
+    name="CSVAgent",
+    func=lambda input_text: csv_agent.invoke({"input": input_text})["output"],
+    description="Write and execute CSV code based on requirements."
+)
 
+# Define tools for the react agent
+tools = [PythonREPLTool(), csv_tool]  # Include both Python REPL and CSV tools
 
-prompt = "You are a helpful assistant."
+# Create a React agent with the tools
+prompt = "You are a helpful assistant specialized in data analysis. You have access to a CSV file and Python tools to help answer questions about the data."
 agent_executor = create_react_agent(llm, tools, prompt=prompt)
+
+# Define state types for the workflow
 class PlanExecute(TypedDict):
     input: str
     plan: List[str]
@@ -68,45 +68,53 @@ class PlanExecute(TypedDict):
 
 class Plan(BaseModel):
     """Plan to follow in future"""
-
     steps: List[str] = Field(
         description="different steps to follow, should be in sorted order"
     )
 
-
 class Response(BaseModel):
     """Response to user."""
-
     response: str
-
 
 class Act(BaseModel):
     """Action to perform."""
-
     action: Union[Response, Plan] = Field(
         description="Action to perform. If you want to respond to user, use Response. "
         "If you need to further use tools to get the answer, use Plan."
     )
 
+# Define prompts for planning and replanning
+planner_prompt = ChatPromptTemplate.from_messages([
+    (
+        "system",
+        """For the given objective, create a step-by-step plan.
+        Your steps will be executed by a tool that can write and run code.
+        Write concise, clear steps that explain what needs to be done.
+        Focus only on the necessary steps to complete the objective.
+        """,
+    ),
+    ("placeholder", "{messages}"),
+])
 
 replanner_prompt = ChatPromptTemplate.from_template(
-    """For the given objective, come up with a simple step by step plan.For the given objective, You have to give plan to write a code to wroter agent so give simple steps that agent should understnad what to do 
-      come up with a simple step by step plan. 
-This plan should involve individual tasks, that if executed correctly will yield the correct answer. Do not add any superfluous steps. 
-The result of the final step should be the final answer. Make sure that each step has all the information needed - do not skip steps.
+    """For the given objective, update your step-by-step plan based on progress so far.
 
 Your objective was this: {input}
 
-Your original plan was this: {plan}
+Your original plan was: {plan}
 
-You have currently done the follow steps: {past_steps}
+You have currently completed these steps: {past_steps}
 
-Update your plan accordingly. If no more steps are needed and you can return to the user, then respond with that. Otherwise, fill out the plan. Only add steps to the plan that still NEED to be done. Do not return previously done steps as part of the plan."""
+Update your plan accordingly. If no more steps are needed and you can return to the user, 
+provide a final response. Otherwise, list only the remaining steps that need to be done.
+Do not include previously completed steps in your updated plan."""
 )
 
-
+# Create the planner and replanner
+planner = planner_prompt | llm.with_structured_output(Plan)
 replanner = replanner_prompt | llm.with_structured_output(Act)
 
+# Define workflow functions
 async def execute_step(state: PlanExecute):
     plan = state["plan"]
     plan_str = "\n".join(f"{i+1}. {step}" for i, step in enumerate(plan))
@@ -122,11 +130,8 @@ async def execute_step(state: PlanExecute):
     }
 
 async def plan_step(state: PlanExecute):
-
     plan = await planner.ainvoke({"messages": [("user", state["input"])]})
-
     return {"plan": plan.steps}
-
 
 async def replan_step(state: PlanExecute):
     output = await replanner.ainvoke(state)
@@ -135,67 +140,45 @@ async def replan_step(state: PlanExecute):
     else:
         return {"plan": output.action.steps}
 
-
 def should_end(state: PlanExecute):
     if "response" in state and state["response"]:
         return END
     else:
         return "agent"
 
+# Build the workflow
 workflow = StateGraph(PlanExecute)
-
-# Add the plan node
 workflow.add_node("planner", plan_step)
-
-# Add the execution step
 workflow.add_node("agent", execute_step)
-
-# Add a replan node
 workflow.add_node("replan", replan_step)
 
+# Connect the nodes
 workflow.add_edge(START, "planner")
-
-# From plan we go to agent
 workflow.add_edge("planner", "agent")
-
-# From agent, we replan
-
 workflow.add_edge("agent", "replan")
-
 workflow.add_conditional_edges(
     "replan",
-    # Next, we pass in the function that will determine which node is called next.
     should_end,
     ["agent", END],
 )
 
+# Compile the workflow
 app = workflow.compile()
 
-
-planner_prompt = ChatPromptTemplate.from_messages(
-    [
-        (
-            "system",
-            """For given ibjective you have to plan step by step. make sure you give clear steps, 
-            you steps are taken by writer tool it writes the code and then evaluationtool evaluates it if is evaluated properly then you have to go to next step
-            write concise steps dont write unnecessary matter just what to do
-            """,
-        ),
-        ("placeholder", "{messages}"),
-    ]
-)
-planner = planner_prompt | llm.with_structured_output(Plan)
-
+# Define the input for the workflow
 config = {"recursion_limit": 50}
 inputs = {"input": "how many columns are there in file episode_info.csv"}
 
+# Run the workflow
 async def main():
+    print("Starting workflow to analyze episode_info.csv...")
     async for event in app.astream(inputs, config=config):
         for k, v in event.items():
             if k != "__end__":
-                print("........")
+                print("\n--- STEP UPDATE ---")
                 print(v)
+    print("\nWorkflow completed.")
 
-asyncio.run(main())
-
-
+# Execute the workflow
+if __name__ == "__main__":
+    asyncio.run(main())
