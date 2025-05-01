@@ -25,17 +25,29 @@ def main():
     azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
     gpt4_deployment_name = os.getenv("AZURE_DEPLOYMENT_NAME")
     os.environ["LANGCHAIN_TRACING_V2"] = "false"
-    print(" I am good")
-    azure_llm = AzureChatOpenAI(
+    llm = AzureChatOpenAI(
         azure_endpoint=azure_endpoint,
         api_key=azure_api_key,
         deployment_name=gpt4_deployment_name,
-        temperature=0
+        temperature=0,
+        stop=["\nObservation", "Observation"]
     )
-    print("I am perfect")
-    # Custom Tool: Executes machine.py
-    def execute_machine_py(_):
+
+    # Tools
+
+    def write_execute_py(code: str) -> str:
         try:
+            # Strip surrounding triple quotes if present
+            if code.startswith('"""') and code.endswith('"""'):
+                code = code[3:-3]
+            elif code.startswith("'''") and code.endswith("'''"):
+                code = code[3:-3]
+            
+            # Optionally strip a trailing quote if one got appended wrongly
+            code = code.rstrip('"\'')
+
+            with open("machine.py", "w") as f:
+                f.write(code.strip())
             print("Running machine.py ...")
             result = subprocess.run(["python", "machine.py"], capture_output=True, text=True, timeout=10)
             print(f"STDOUT:\n{result.stdout}")
@@ -44,49 +56,36 @@ def main():
                 return f"APPROVED - machine.py ran successfully.\nOutput:\n{result.stdout.strip()}"
             else:
                 return f"NEEDS REVISION - machine.py failed.\nErrors:\n{result.stderr.strip()}"
+
+        except Exception as e:
+            return f"Failed to update machine.py: {str(e)}"
         except subprocess.TimeoutExpired:
             return "NEEDS REVISION - machine.py timed out during execution."
 
-    ExecutionTool = Tool(
-        name="RunMachinePy",
-        func=execute_machine_py,
-        description="Runs machine.py using subprocess and returns output or errors."
-    )
-
-    # Tools
-
-    def write_to_machine_py(code: str) -> str:
-        try:
-            with open("machine.py", "w") as f:
-                f.write(code)
-            return "machine.py updated successfully."
-        except Exception as e:
-            return f"Failed to update machine.py: {str(e)}"
-
     FileWriteTool = Tool(
         name="WriteToFile",
-        func=write_to_machine_py,
-        description="Writes the provided Python code to machine.py file. Input should be valid Python code as a string."
+        func=write_execute_py,
+        description="Writes the provided Python code to machine.py file and executes it if it says it require revision then you have to call PythonREPLTool to re-write the code. Input should be valid Python code as a string."
     )
+
         
-    tools = [PythonREPLTool(), ExecutionTool,FileWriteTool]
+    tools = [PythonREPLTool(), FileWriteTool]
     # Code Writer Agent
     writer_prompt = hub.pull("langchain-ai/react-agent-template").partial(
             instructions="""
             You are an agent designed to write Python code based on user requirements.
-            First, write clean Python code using the Python REPL tool to test it (if needed).
+            Write clean Python code using Python REPL to test it (if needed).
             Do NOT include ```python or ``` markers — write only valid raw Python code.
             Do not explain, do not comment, do not return markdown.
-            Once finalized, use the WriteToFile tool to write the complete code into machine.py.
-            Always overwrite machine.py with the final version.
+            Once finalized, use the WriteToFile tool to overwrite machine.py with the updated version.
+            Always include **all** code, not just what changed.
             Avoid using comments.
             """
         )
 
-    tools = [PythonREPLTool(),FileWriteTool]
     print(f"writer_prompt is {writer_prompt}")
 
-    writer_agent = create_react_agent(llm=azure_llm, tools=tools, prompt=writer_prompt)
+    writer_agent = create_react_agent(llm=llm, tools=tools, prompt=writer_prompt)
     writer_executor = AgentExecutor(agent=writer_agent, tools=tools, verbose=True, handle_parsing_errors=True)
 
     WriterTool = Tool(
@@ -94,28 +93,8 @@ def main():
             func=lambda input_text: writer_executor.invoke({"input": input_text})["output"],
             description="Writes or updates machine.py with Python code based on the input prompt."
         )
-
-    # Code Evaluator Agent
-    evaluator_prompt = hub.pull("langchain-ai/react-agent-template").partial(
-        instructions="""
-            Your only job is to run the Python script 'machine.py' using the 'RunMachinePy' tool.
-            If it runs successfully without errors, return ONLY the string 'APPROVED'.
-            If it fails, return ONLY 'NEEDS REVISION' followed by a short reason.
-            """
-    )
-    tools = [ExecutionTool]
-    evaluator_agent = create_react_agent(llm=azure_llm, tools=tools, prompt=evaluator_prompt)
-    evaluator_executor = AgentExecutor(agent=evaluator_agent, tools=tools, verbose=True, handle_parsing_errors=True)
-
-
-    EvaluationTool = Tool(
-    name="EvaluationAgent",
-    func=lambda input_text: evaluator_executor.invoke({"input": input_text}),
-    description="execute the funtion and pass the message"
-)
     
-
-    tools = [WriterTool, EvaluationTool]
+    tools = [WriterTool]
 
     template = """
     Answer the following questions as best you can. You have access to the following tools:
@@ -129,7 +108,7 @@ def main():
     Action Input: the input to the action
     Observation: the result of the action
     ... (this Thought/Action/Action Input/Observation can repeat N times)
-    Thought: If the EvaluationTool says code is APPROVED then only you have to confirm that code is good.After wrtiting the code using WriterTool you have to use EvaluationTool to check if it correct or not
+    Thought: follow the instruction and write the code
     Final Answer: the final answer to the original input question
     
     Begin!
@@ -143,13 +122,7 @@ def main():
         tool_names=", ".join([t.name for t in tools]),
     )
 
-    llm = AzureChatOpenAI(
-        azure_endpoint=azure_endpoint,
-        api_key=azure_api_key,
-        deployment_name=gpt4_deployment_name,
-        temperature=0,
-        stop=["\nObservation", "Observation"]
-    )
+    
     
     agent = (
         {
@@ -202,7 +175,7 @@ def main():
         return None
 
     # Start interaction
-    user_request = "write a python code for fibonacci series upto 10 and also write print hello world program do step by step update the code "
+    user_request = "write a python code for fibonacci series upto 10 and print hello world"
     result = run_agent_with_steps(agent, tools, user_request)
     print(result)
 
