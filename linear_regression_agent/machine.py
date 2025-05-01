@@ -1,17 +1,18 @@
-# Function to generate Fibonacci series up to the 10th number
-def fibonacci_series(n):
-    series = []
-    a, b = 0, 1
-    while len(series) < n:
-        series.append(a)
-        a, b = b, a + b
-    return series
+import math
 
-# Generate Fibonacci series up to the 10th number
-fib_series = fibonacci_series(10)
+# Function to add two numbers and calculate the logarithm of the result
+def add_and_logarithm(num1, num2):
+    result = num1 + num2
+    if result > 0:
+        log_result = math.log(result)
+        return log_result
+    else:
+        return "Logarithm undefined for non-positive numbers."
 
-# Print the Fibonacci series
-print("Fibonacci series up to 10:", fib_series)
+# Predefined numbers for testing
+number1 = 5.0
+number2 = 3.0
 
-# Print "Hello World"
-print("Hello World")
+# Calculate and print the logarithm of their sum
+logarithm_result = add_and_logarithm(number1, number2)
+print("The logarithm of the sum is:", logarithm_result)
