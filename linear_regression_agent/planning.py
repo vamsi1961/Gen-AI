@@ -106,6 +106,7 @@ async def execute_step(state: PlanExecute):
         "past_steps": [(task, agent_response["messages"][-1].content)],
     }
 
+
 async def plan_step(state: PlanExecute):
 
     plan = await planner.ainvoke({"messages": [("user", state["input"])]})
