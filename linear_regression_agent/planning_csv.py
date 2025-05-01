@@ -53,7 +53,7 @@ csv_tool = Tool(
 )
 
 # Define tools for the react agent
-tools = [PythonREPLTool(), csv_tool]  # Include both Python REPL and CSV tools
+tools = [csv_tool , TavilySearchResults(max_results=3)]  # Include both Python REPL and CSV tools
 
 # Create a React agent with the tools
 prompt = "You are a helpful assistant specialized in data analysis. You have access to a CSV file and Python tools to help answer questions about the data."
@@ -138,6 +138,7 @@ async def replan_step(state: PlanExecute):
     if isinstance(output.action, Response):
         return {"response": output.action.response}
     else:
+        print(" I am replanning")
         return {"plan": output.action.steps}
 
 def should_end(state: PlanExecute):
@@ -167,7 +168,8 @@ app = workflow.compile()
 
 # Define the input for the workflow
 config = {"recursion_limit": 50}
-inputs = {"input": "how many columns are there in file episode_info.csv"}
+# inputs = {"input": "what is the hometown of the current Australia open winner?"}
+inputs={"input": "First, check what columns are available. Then find which column might contain writer names. Finally, tell me which writer has the most episodes."}    
 
 # Run the workflow
 async def main():

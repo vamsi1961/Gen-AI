@@ -31,11 +31,13 @@ def main():
         path="episode_info.csv",
         verbose=True,
         allow_dangerous_code=True,
+        agent_executor_kwargs={"handle_parsing_errors": True},
+        handle_parsing_errors=True
     )
 
     csv_agent.invoke(
-        input={"input": "how many columns are there in file episode_info.csv"}
-    )
+        input={"input": "First, check what columns are available. Then find which column might contain writer names. Finally, tell me which writer has the most episodes."}    
+        )
 
 if __name__ == "__main__":
     main()
