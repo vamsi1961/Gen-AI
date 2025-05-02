@@ -18,6 +18,7 @@ from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain.agents import AgentExecutor
 from langchain import hub
 import subprocess
+import re
 from langchain.agents.output_parsers import ReActSingleInputOutputParser
 from langchain.agents.format_scratchpad import format_log_to_str
 from langchain.prompts import PromptTemplate
@@ -47,37 +48,47 @@ llm = AzureChatOpenAI(
     temperature=0
 )
 
+def clean_code_string(code: str) -> str:
+    """Clean and extract Python code from markdown code blocks or other formats."""
+    # Strip surrounding triple quotes if present
+    if code.startswith('"""') and code.endswith('"""'):
+        code = code[3:-3]
+    elif code.startswith("'''") and code.endswith("'''"):
+        code = code[3:-3]
+    
+    # Handle markdown code blocks
+    if code.startswith("```python") and code.endswith("```"):
+        code = code[len("```python"):-3].strip()
+    elif code.startswith("```") and code.endswith("```"):
+        code = code[3:-3].strip()
+    
+    # Ensure no language identifier at start of file
+    code_lines = code.strip().split('\n')
+    if code_lines and code_lines[0].strip() == 'python':
+        code = '\n'.join(code_lines[1:])
+    
+    # Optionally strip a trailing quote if one got appended wrongly
+    code = code.rstrip('"\'')
+    
+    return code.strip()
+
 def write_execute_py(code: str) -> str:
     try:
-        # Strip surrounding triple quotes if present
-        if code.startswith('"""') and code.endswith('"""'):
-            code = code[3:-3]
-        elif code.startswith("'''") and code.endswith("'''"):
-            code = code[3:-3]
-        elif code.startswith("```") and code.endswith("```"):
-            code = code[3:-3]
-        # Properly handle markdown code blocks
-
-        if code.startswith("```python") and code.endswith("```"):
-            code = code[len("```python"):-3].strip()
-
-        elif code.startswith("```") and code.endswith("```"):
-            code = code[3:-3].strip()
+        # Clean the code string
+        code = clean_code_string(code)
         
-        # Ensure no language identifier at start of file
-        code_lines = code.strip().split('\n')
-        if code_lines and code_lines[0].strip() == 'python':
-            code = '\n'.join(code_lines[1:])
-
-        # Optionally strip a trailing quote if one got appended wrongly
-        code = code.rstrip('"\'')
-
+        print(f"Writing to machine.py:\n{code}")
+        
         with open("machine.py", "w") as f:
-            f.write(code.strip())
-        print("Running machine.py ...")
+            f.write(code)
+            
+        print("Code written to machine.py, now executing...")
+        
+        # Run the file
         result = subprocess.run(["python", "machine.py"], capture_output=True, text=True, timeout=10)
         print(f"STDOUT:\n{result.stdout}")
         print(f"STDERR:\n{result.stderr}")
+        
         if result.returncode == 0:
             return f"APPROVED - machine.py ran successfully.\nOutput:\n{result.stdout.strip()}"
         else:
@@ -88,14 +99,36 @@ def write_execute_py(code: str) -> str:
     except subprocess.TimeoutExpired:
         return "NEEDS REVISION - machine.py timed out during execution."
 
+# Create a direct file writing function (without execution)
+def write_code_to_file(code: str) -> str:
+    """Simply writes code to machine.py without executing it."""
+    try:
+        code = clean_code_string(code)
+        
+        print(f"Writing to machine.py (without execution):\n{code}")
+        
+        with open("machine.py", "w") as f:
+            f.write(code)
+            
+        return f"Code written to machine.py successfully."
+    except Exception as e:
+        return f"Failed to write to machine.py: {str(e)}"
+
 FileWriteTool = Tool(
     name="WriteToFile",
     func=write_execute_py,
     description="Writes the provided Python code to machine.py file and executes it if it says it require revision then you have to call PythonREPLTool to re-write the code. Input should be valid Python code as a string."
 )
 
+# Adding a simpler file writing tool
+DirectFileWriteTool = Tool(
+    name="DirectWriteToFile",
+    func=write_code_to_file,
+    description="Simply writes the provided Python code to machine.py file without executing it. Use this when you just want to save the code. Input should be valid Python code as a string."
+)
     
-tools = [PythonREPLTool(), FileWriteTool]
+tools = [PythonREPLTool(), FileWriteTool, DirectFileWriteTool]
+
 # Code Writer Agent
 def read_existing_code() -> str:
     """Read the content of machine.py if it exists."""
@@ -119,10 +152,12 @@ instructions = f"""
     ```python
     {existing_code}
     ```
-    Only Test the code using PythonRePL tool dont test the final code. See what you can add to meet the requirements if you have to remove it to meet requirements then remove it
+    
+    Only Test the code using PythonRePL tool don't test the final code. See what you can add to meet the requirements if you have to remove it to meet requirements then remove it
     Modify the existing code to meet the new requirements rather than writing from scratch.
     Only make necessary changes to fulfill the requirements.
-    Once you have the code working, use the WriteToFile tool to save it.
+    
+    When your code is ready, use the DirectWriteToFile tool to save it to machine.py.
     
     Do NOT include ```python or ``` markers in your final answer - write only valid raw Python code.
     """
@@ -138,10 +173,31 @@ writer_prompt = hub.pull("langchain-ai/react-agent-template").partial(
 writer_agent = create_chain_react_agent(llm=llm, tools=tools, prompt=writer_prompt)
 writer_executor = AgentExecutor(agent=writer_agent, tools=tools, verbose=True, handle_parsing_errors=True)
 
+# Custom handler for WriterAgent to ensure code is saved properly
+def writer_agent_handler(input_text):
+    """Custom handler for WriterAgent that ensures code is saved properly."""
+    try:
+        result = writer_executor.invoke({"input": input_text})
+        
+        # Extract code if the result contains Python code block
+        output = result.get("output", "")
+        code_match = re.search(r'```python\s*([\s\S]*?)\s*```', output)
+        
+        if code_match:
+            # We found some code in the output
+            code = code_match.group(1)
+            print("Found code in WriterAgent output, saving to file...")
+            write_code_to_file(code)
+            
+        return output
+    except Exception as e:
+        print(f"Error in WriterAgent: {e}")
+        return f"Error in WriterAgent: {e}"
+
 WriterTool = Tool(
         name="WriterAgent",
-        func=lambda input_text: writer_executor.invoke({"input": input_text})["output"],
-        description="Writes or updates machine.py with Python code based on the input prompt."
+        func=writer_agent_handler,
+        description="Writes or updates machine.py with Python code based on the input prompt. Automatically extracts and saves any code blocks in the response."
     )
 
 evaluator_prompt = hub.pull("langchain-ai/react-agent-template").partial(
@@ -155,13 +211,11 @@ evaluator_prompt = hub.pull("langchain-ai/react-agent-template").partial(
 evaluator_agent = create_chain_react_agent(llm=llm, tools=tools, prompt=evaluator_prompt)
 evaluator_executor = AgentExecutor(agent=evaluator_agent, tools=tools, verbose=True, handle_parsing_errors=True)
 
-
 EvaluationTool = Tool(
 name="EvaluationAgent",
 func=lambda input_text: evaluator_executor.invoke({"input": input_text}),
-description="execute the funtion and pass the message"
+description="Execute the function and pass the message"
 )
-
 
 tools = [WriterTool, EvaluationTool]
 
@@ -201,6 +255,25 @@ prompt = PromptTemplate.from_template(template=template).partial(
     tools=render_text_description(tools),
     tool_names=", ".join([t.name for t in tools]),
 )
+
+# Extract code from text that might contain Python code
+def extract_code_from_text(text: str) -> Optional[str]:
+    """Extract Python code from text that might contain code blocks or raw code."""
+    # Try to extract code blocks first
+    code_match = re.search(r'```python\s*([\s\S]*?)\s*```', text)
+    if code_match:
+        return code_match.group(1).strip()
+    
+    # Try to extract code blocks without language specifier
+    code_match = re.search(r'```\s*([\s\S]*?)\s*```', text)
+    if code_match:
+        return code_match.group(1).strip()
+    
+    # If no code blocks, check if the text itself looks like code
+    if "def " in text or "import " in text or "print(" in text:
+        return text.strip()
+    
+    return None
 
 # Custom ReAct parser with improved error handling
 class CustomReActSingleInputOutputParser(ReActSingleInputOutputParser):
@@ -316,6 +389,7 @@ def should_end(state: PlanExecute):
 def run_agent_with_steps(agent, tools, input_text: str, max_iterations: int = 10):
     """Run the agent for multiple iterations until it reaches a final answer or max iterations"""
     intermediate_steps = []
+    code_accumulated = None
     
     for i in range(max_iterations):
         print(f"\n--- Iteration {i+1} ---")
@@ -331,7 +405,18 @@ def run_agent_with_steps(agent, tools, input_text: str, max_iterations: int = 10
             
             if isinstance(agent_step, AgentFinish):
                 print("### Agent Finished ###")
-                print(f"Final Answer: {agent_step.return_values['output']}")
+                final_output = agent_step.return_values['output']
+                print(f"Final Answer: {final_output}")
+                
+                # Try to extract code from the final answer and save it if found
+                code = extract_code_from_text(final_output)
+                if code:
+                    print("Found code in final answer, saving to file...")
+                    write_code_to_file(code)
+                elif code_accumulated:
+                    print("Using accumulated code from previous steps...")
+                    write_code_to_file(code_accumulated)
+                    
                 return agent_step
                 
             if isinstance(agent_step, AgentAction):
@@ -339,10 +424,16 @@ def run_agent_with_steps(agent, tools, input_text: str, max_iterations: int = 10
                 print(f"Selected tool: {tool_name}")
                 tool_to_use = find_tool_by_name(tools, tool_name)
                 tool_input = agent_step.tool_input
+                
+                # Try to extract code from the tool input
+                code = extract_code_from_text(tool_input)
+                if code and (tool_name == "WriterAgent" or tool_name == "WriteToFile" or tool_name == "DirectWriteToFile"):
+                    code_accumulated = code
+                
                 observation = tool_to_use.func(str(tool_input))
                 print(f"Observation: {observation}")
                 intermediate_steps.append((agent_step, str(observation)))
-                print(f"intermediate_steps is {intermediate_steps}")
+                print(f"Intermediate steps updated")
         
         except OutputParserException as e:
             print(f"Parsing error: {e}")
@@ -353,6 +444,18 @@ def run_agent_with_steps(agent, tools, input_text: str, max_iterations: int = 10
                 error_parts = error_msg.split("Parsing LLM output")
                 if len(error_parts) > 1:
                     llm_output = error_parts[1]
+                    
+                    # Check if there's code we can extract
+                    code = extract_code_from_text(llm_output)
+                    if code:
+                        print("Found code in parsing error, saving it...")
+                        code_accumulated = code
+                        
+                        # If it's clearly meant for WriterAgent, directly write to file
+                        if "WriterAgent" in llm_output and "Action Input:" in llm_output:
+                            print("Directly writing extracted code to file...")
+                            result = write_code_to_file(code)
+                            print(f"Write result: {result}")
                     
                     # Check if there's an action we can extract
                     if "Action:" in llm_output and "Action Input:" in llm_output:
@@ -374,6 +477,13 @@ def run_agent_with_steps(agent, tools, input_text: str, max_iterations: int = 10
                                         # Try to execute the tool
                                         try:
                                             tool_to_use = find_tool_by_name(tools, tool_name)
+                                            
+                                            # Special handling for WriterAgent to extract code
+                                            if tool_name == "WriterAgent" or tool_name == "WriteToFile" or tool_name == "DirectWriteToFile":
+                                                code = extract_code_from_text(tool_input)
+                                                if code:
+                                                    code_accumulated = code
+                                            
                                             observation = tool_to_use.func(str(tool_input))
                                             print(f"Observation: {observation}")
                                             
@@ -387,12 +497,23 @@ def run_agent_with_steps(agent, tools, input_text: str, max_iterations: int = 10
                         except Exception as recovery_error:
                             print(f"Error during recovery attempt: {recovery_error}")
             
+            # If we have code accumulated but couldn't recover normally, write it to file
+            if code_accumulated:
+                print("Writing accumulated code to file before failing...")
+                write_code_to_file(code_accumulated)
+            
             # If we couldn't recover, we'll treat this as a final step
             print("Could not recover from parsing error, treating as final step")
-            return AgentFinish({"output": f"Error in agent execution: {e}. Please check the workflow and try again."}, "")
+            return AgentFinish({"output": f"Error in agent execution, but code has been saved to machine.py. Error details: {e}"}, "")
             
     print("Reached maximum iterations without finishing")
-    return AgentFinish({"output": "Reached maximum number of iterations without completing the task."}, "")
+    
+    # If we have code accumulated but reached max iterations, write it to file
+    if code_accumulated:
+        print("Writing accumulated code to file before finishing...")
+        write_code_to_file(code_accumulated)
+        
+    return AgentFinish({"output": "Reached maximum number of iterations, but the code has been saved to machine.py."}, "")
 
 def execute_step(state: PlanExecute, max_iterations: int = 10) -> Dict[str, Any]:
     if not state.get("plan"):
@@ -406,19 +527,20 @@ def execute_step(state: PlanExecute, max_iterations: int = 10) -> Dict[str, Any]
     
     plan_str = "\n".join(f"{i+1}. {step}" for i, step in enumerate(plan))
     task = plan[0]
-    task_formatted = f"""For the following plan: {plan_str}\n\n You are tasked with executing step {1}, {task}."""
+    task_formatted = f"""For the following plan: {plan_str}\n\n You are tasked with executing step {1}, {task}. 
+    Make sure to save your final code to machine.py using DirectWriteToFile."""
 
     result = run_agent_with_steps(code_agent, tools, task_formatted)
     
     # Handle the result
     if result is None:
-        return {"past_steps": [(task, "Failed to complete")], "response": "Error executing the step."}
+        return {"past_steps": [(task, "Failed to complete")], "response": "Error executing the step, but any code written has been saved to machine.py."}
     
     if isinstance(result, AgentFinish):
         return {"past_steps": [(task, result.return_values.get("output", "Task completed"))]}
     
     # Fallback - should not reach here with the new implementation
-    return {"past_steps": [(task, "Task execution completed with unknown result")]}
+    return {"past_steps": [(task, "Task execution completed, code saved to machine.py.")]}
 
 
 # Build the workflow
@@ -452,6 +574,17 @@ def main():
                 print("\n--- STEP UPDATE ---")
                 print(v)
     print("\nWorkflow completed.")
+    
+    # Display the final code after completion
+    try:
+        with open("machine.py", "r") as f:
+            final_code = f.read()
+            print("\nFinal code in machine.py:")
+            print("-------------------------")
+            print(final_code)
+            print("-------------------------")
+    except Exception as e:
+        print(f"Error reading final code: {e}")
 
 # Execute the workflow
 if __name__ == "__main__":
