@@ -6,7 +6,7 @@ from langchain.agents import create_react_agent as create_chain_react_agent
 from langchain_openai import AzureChatOpenAI
 from dotenv import load_dotenv
 import operator
-from typing import Annotated, List, Tuple
+from typing import Annotated, List, Tuple, Dict, Any, Optional
 from typing_extensions import TypedDict
 from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate
@@ -23,6 +23,7 @@ from langchain.agents.format_scratchpad import format_log_to_str
 from langchain.prompts import PromptTemplate
 from langchain.tools.render import render_text_description
 from langchain.schema import AgentAction, AgentFinish
+from langchain_core.exceptions import OutputParserException
 
 
 # Load environment variables
@@ -201,7 +202,32 @@ prompt = PromptTemplate.from_template(template=template).partial(
     tool_names=", ".join([t.name for t in tools]),
 )
 
-# Create the agent with the modified prompt
+# Custom ReAct parser with improved error handling
+class CustomReActSingleInputOutputParser(ReActSingleInputOutputParser):
+    def parse(self, text: str) -> Union[AgentAction, AgentFinish]:
+        try:
+            return super().parse(text)
+        except OutputParserException as e:
+            # Check if it contains both an action and a final answer
+            if "both a final answer and a parse-able action" in str(e):
+                # Prioritize the Action over Final Answer
+                if "Action:" in text and "Action Input:" in text:
+                    # Extract just the action parts
+                    action_parts = text.split("Action:")
+                    if len(action_parts) > 1:
+                        action_text = "Action:" + action_parts[1].split("Thought: I now know the final answer")[0]
+                        return super().parse(action_text)
+                # If no action found, try to extract the final answer
+                if "Final Answer:" in text:
+                    final_answer_parts = text.split("Final Answer:")
+                    if len(final_answer_parts) > 1:
+                        final_answer = final_answer_parts[1].strip()
+                        return AgentFinish({"output": final_answer}, text)
+            
+            # Re-raise if we couldn't handle it
+            raise e
+
+# Create the agent with the modified parser
 code_agent = (
     {
         "input": lambda x: x["input"],
@@ -209,7 +235,7 @@ code_agent = (
     }
     | prompt
     | llm
-    | ReActSingleInputOutputParser()
+    | CustomReActSingleInputOutputParser()
 )
 
 # Define state types for the workflow
@@ -288,11 +314,12 @@ def should_end(state: PlanExecute):
         return "agent"
 
 def run_agent_with_steps(agent, tools, input_text: str, max_iterations: int = 10):
-        """Run the agent for multiple iterations until it reaches a final answer or max iterations"""
-        intermediate_steps = []
-        
-        for i in range(max_iterations):
-            print(f"\n--- Iteration {i+1} ---")
+    """Run the agent for multiple iterations until it reaches a final answer or max iterations"""
+    intermediate_steps = []
+    
+    for i in range(max_iterations):
+        print(f"\n--- Iteration {i+1} ---")
+        try:
             agent_step = agent.invoke(
                 {
                     "input": input_text,
@@ -316,19 +343,82 @@ def run_agent_with_steps(agent, tools, input_text: str, max_iterations: int = 10
                 print(f"Observation: {observation}")
                 intermediate_steps.append((agent_step, str(observation)))
                 print(f"intermediate_steps is {intermediate_steps}")
+        
+        except OutputParserException as e:
+            print(f"Parsing error: {e}")
+            # Try to extract useful information even if parsing fails
+            # If the error message contains the LLM output, we can try to salvage it
+            error_msg = str(e)
+            if "Parsing LLM output" in error_msg:
+                error_parts = error_msg.split("Parsing LLM output")
+                if len(error_parts) > 1:
+                    llm_output = error_parts[1]
+                    
+                    # Check if there's an action we can extract
+                    if "Action:" in llm_output and "Action Input:" in llm_output:
+                        print("Attempting to recover action from parsing error...")
+                        try:
+                            action_parts = llm_output.split("Action:")
+                            if len(action_parts) > 1:
+                                action_part = action_parts[1]
+                                tool_name_parts = action_part.split("\n", 1)
+                                if len(tool_name_parts) > 0:
+                                    tool_name = tool_name_parts[0].strip()
+                                    
+                                    input_parts = action_part.split("Action Input:")
+                                    if len(input_parts) > 1:
+                                        tool_input = input_parts[1].split("\n\n", 1)[0].strip()
+                                        
+                                        print(f"Recovered - Tool: {tool_name}, Input: {tool_input}")
+                                        
+                                        # Try to execute the tool
+                                        try:
+                                            tool_to_use = find_tool_by_name(tools, tool_name)
+                                            observation = tool_to_use.func(str(tool_input))
+                                            print(f"Observation: {observation}")
+                                            
+                                            # Create a synthetic AgentAction
+                                            agent_action = AgentAction(tool=tool_name, tool_input=tool_input, log=llm_output)
+                                            intermediate_steps.append((agent_action, str(observation)))
+                                            print("Successfully recovered from parsing error")
+                                            continue
+                                        except Exception as tool_error:
+                                            print(f"Error executing recovered tool: {tool_error}")
+                        except Exception as recovery_error:
+                            print(f"Error during recovery attempt: {recovery_error}")
             
-        print("Reached maximum iterations without finishing")
-        return None
+            # If we couldn't recover, we'll treat this as a final step
+            print("Could not recover from parsing error, treating as final step")
+            return AgentFinish({"output": f"Error in agent execution: {e}. Please check the workflow and try again."}, "")
+            
+    print("Reached maximum iterations without finishing")
+    return AgentFinish({"output": "Reached maximum number of iterations without completing the task."}, "")
 
-def execute_step(state: PlanExecute, max_iterations: int = 10):
+def execute_step(state: PlanExecute, max_iterations: int = 10) -> Dict[str, Any]:
+    if not state.get("plan"):
+        print("No plan found in state")
+        return {"response": "No steps to execute. Please provide valid instructions."}
+    
     plan = state["plan"]
+    if not plan:
+        print("Empty plan")
+        return {"response": "Empty execution plan. Please provide valid instructions."}
+    
     plan_str = "\n".join(f"{i+1}. {step}" for i, step in enumerate(plan))
     task = plan[0]
     task_formatted = f"""For the following plan: {plan_str}\n\n You are tasked with executing step {1}, {task}."""
 
     result = run_agent_with_steps(code_agent, tools, task_formatted)
-    return result
-            
+    
+    # Handle the result
+    if result is None:
+        return {"past_steps": [(task, "Failed to complete")], "response": "Error executing the step."}
+    
+    if isinstance(result, AgentFinish):
+        return {"past_steps": [(task, result.return_values.get("output", "Task completed"))]}
+    
+    # Fallback - should not reach here with the new implementation
+    return {"past_steps": [(task, "Task execution completed with unknown result")]}
 
 
 # Build the workflow
@@ -354,10 +444,8 @@ app = workflow.compile()
 config = {"recursion_limit": 50}
 inputs={"input": "First, write a code to add 2 numbers by taking input Then do logarithm of the result do step by step. Do it in only 2 steps"}    
 
-
-
 def main():
-    print("Starting workflow to analyze episode_info.csv...")
+    print("Starting workflow to execute code generation task...")
     for event in app.stream(inputs, config=config):
         for k, v in event.items():
             if k != "__end__":
