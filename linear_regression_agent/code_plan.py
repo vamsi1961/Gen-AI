@@ -143,19 +143,33 @@ WriterTool = Tool(
         description="Writes or updates machine.py with Python code based on the input prompt."
     )
 
-tools = [WriterTool]
+evaluator_prompt = hub.pull("langchain-ai/react-agent-template").partial(
+        instructions="""You are an agent that checks if the code in machine.py works.
+        Use the 'RunMachinePy' tool to run it and evaluate its correctness.
+        If the code runs without errors, return 'APPROVED'.
+        If not, return 'NEEDS REVISION' and describe the problem.
+        """
+    )
 
-# Define tools for the react agent
-# tools = [WriterTool , TavilySearchResults(max_results=3)]  
-# Include both Python REPL and CSV tools
+evaluator_agent = create_chain_react_agent(llm=llm, tools=tools, prompt=evaluator_prompt)
+evaluator_executor = AgentExecutor(agent=evaluator_agent, tools=tools, verbose=True, handle_parsing_errors=True)
 
-# Create a React agent with the tools
 
+EvaluationTool = Tool(
+name="EvaluationAgent",
+func=lambda input_text: evaluator_executor.invoke({"input": input_text}),
+description="execute the funtion and pass the message"
+)
+
+
+tools = [WriterTool, EvaluationTool]
+
+# Define the React agent template with STRICT FORMAT instructions
 template = """
     Answer the following questions as best you can. You have access to the following tools:
     {tools}
     
-    Use the following format:
+    Use the following format STRICTLY:
     
     Question: the input question you must answer
     Thought: you should always think about what to do
@@ -163,26 +177,31 @@ template = """
     Action Input: the input to the action
     Observation: the result of the action
     ... (this Thought/Action/Action Input/Observation can repeat N times)
-    Thought: follow the instruction and write the code
+    Thought: I now know the final answer
     Final Answer: the final answer to the original input question
+    
+    IMPORTANT: You must NEVER include both an Action and a Final Answer in the same response.
+    If you want to take an action, only include Action/Action Input.
+    If you're ready to give a final answer, only include Final Answer.
     
     Begin!
     
     Question: {input}
     {agent_scratchpad}
     """
+
 def find_tool_by_name(tools: List[Tool], tool_name: str) -> Tool:
-        for tool in tools:
-            if tool.name == tool_name:
-                return tool
-        raise ValueError(f"Tool with name {tool_name} not found")
+    for tool in tools:
+        if tool.name == tool_name:
+            return tool
+    raise ValueError(f"Tool with name {tool_name} not found")
 
 prompt = PromptTemplate.from_template(template=template).partial(
     tools=render_text_description(tools),
     tool_names=", ".join([t.name for t in tools]),
 )
 
-
+# Create the agent with the modified prompt
 code_agent = (
     {
         "input": lambda x: x["input"],
@@ -191,11 +210,7 @@ code_agent = (
     | prompt
     | llm
     | ReActSingleInputOutputParser()
-    )
-
-# Create a React agent with the tools
-prompt = "You are a helpful assistant specialized in data analysis. You have access to a CSV file and Python tools to help answer questions about the data."
-agent_executor = create_graph_react_agent(llm, tools, prompt=prompt)
+)
 
 # Define state types for the workflow
 class PlanExecute(TypedDict):
@@ -251,14 +266,9 @@ Do not include previously completed steps in your updated plan."""
 # Create the planner and replanner
 planner = planner_prompt | llm.with_structured_output(Plan)
 replanner = replanner_prompt | llm.with_structured_output(Act)
-def find_tool_by_name(tools: List[Tool], tool_name: str) -> Tool:
-        for tool in tools:
-            if tool.name == tool_name:
-                return tool
-        raise ValueError(f"Tool with name {tool_name} not found")
-        
+
 # Define workflow functions
-def execute_step(state: PlanExecute,max_iterations: int = 10):
+def execute_step(state: PlanExecute, max_iterations: int = 10):
     plan = state["plan"]
     plan_str = "\n".join(f"{i+1}. {step}" for i, step in enumerate(plan))
     task = plan[0]
@@ -267,31 +277,61 @@ def execute_step(state: PlanExecute,max_iterations: int = 10):
     intermediate_steps = []
     for i in range(max_iterations):
         print(f"\n--- Iteration {i+1} ---")
-        agent_step = code_agent.invoke({
-            "input": task,
-            "agent_scratchpad": intermediate_steps,
-        })
+        try:
+            agent_step = code_agent.invoke({
+                "input": task,
+                "agent_scratchpad": intermediate_steps,
+            })["output"]
+            print(f"[DEBUG] agent_step: {agent_step}")
+        
 
-        print(f"Agent output: {agent_step}")
+            # Handle agent finish
+            if isinstance(agent_step, AgentFinish):
+                print("### Agent Finished ###")
+                print(f"Final Answer: {agent_step.return_values['output']}")
+                return {"past_steps": [(task, agent_step)]}
+                
+            # Handle agent action
+            elif isinstance(agent_step, AgentAction):
+                tool_name = agent_step.tool
+                print(f"Selected tool: {tool_name}")
+                tool_to_use = find_tool_by_name(tools, tool_name)
+                tool_input = agent_step.tool_input
+                observation = tool_to_use.func(str(tool_input))
+                print(f"Observation: {observation}")
+                intermediate_steps.append((agent_step, str(observation)))
+            
+            # Handle dict-based output from ReAct pipeline
+            elif isinstance(agent_step, dict):
+                if agent_step.get("type") == "agent_finish":
+                    print("### Agent Finished ###")
+                    print(f"Final Answer: {agent_step['return_values']['output']}")
+                    return {"past_steps": [(task, agent_step)]}
+                
+                elif agent_step.get("type") == "agent_action":
+                    tool_name = agent_step["tool"]
+                    print(f"Selected tool: {tool_name}")
+                    tool_to_use = find_tool_by_name(tools, tool_name)
+                    tool_input = agent_step["tool_input"]
+                    observation = tool_to_use.func(str(tool_input))
+                    print(f"Observation: {observation}")
+                    intermediate_steps.append((agent_step, str(observation)))
+                else:
+                    print("Unknown agent output format:", agent_step)
+            else:
+                print("Unknown agent output type:", type(agent_step))
+            
+        except Exception as e:
+            print(f"Error during agent execution: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            # Try to continue with the next iteration
+            continue
 
-        # Handle dict-based output from ReAct pipeline
-        if agent_step.get("type") == "agent_finish":
-            print("### Agent Finished ###")
-            print(f"Final Answer: {agent_step['return_values']['output']}")
-            return {"past_steps": [(task, agent_step)]}
-
-        elif agent_step.get("type") == "agent_action":
-            tool_name = agent_step["tool"]
-            print(f"Selected tool: {tool_name}")
-            tool_to_use = find_tool_by_name(tools, tool_name)
-            tool_input = agent_step["tool_input"]
-            observation = tool_to_use.func(str(tool_input))
-            print(f"Observation: {observation}")
-            intermediate_steps.append((agent_step, str(observation)))
-
-        else:
-            print("Unknown agent output format")
-
+        except Exception as e:
+                print(f"[ERROR] code_agent failed to process: {str(e)}")
+                import traceback; traceback.print_exc()
+                return None
             
     print("Reached maximum iterations without finishing")
     return None
@@ -335,7 +375,6 @@ app = workflow.compile()
 
 # Define the input for the workflow
 config = {"recursion_limit": 50}
-# inputs = {"input": "what is the hometown of the current Australia open winner?"}
 inputs={"input": "First, write a code to add 2 numbers by taking input Then do logarithm of the result do step by step. Do it in only 2 steps"}    
 
 def main():
