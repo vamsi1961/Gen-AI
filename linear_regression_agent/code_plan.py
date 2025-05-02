@@ -48,47 +48,36 @@ llm = AzureChatOpenAI(
     temperature=0
 )
 
-def clean_code_string(code: str) -> str:
-    """Clean and extract Python code from markdown code blocks or other formats."""
-    # Strip surrounding triple quotes if present
-    if code.startswith('"""') and code.endswith('"""'):
-        code = code[3:-3]
-    elif code.startswith("'''") and code.endswith("'''"):
-        code = code[3:-3]
-    
-    # Handle markdown code blocks
-    if code.startswith("```python") and code.endswith("```"):
-        code = code[len("```python"):-3].strip()
-    elif code.startswith("```") and code.endswith("```"):
-        code = code[3:-3].strip()
-    
-    # Ensure no language identifier at start of file
-    code_lines = code.strip().split('\n')
-    if code_lines and code_lines[0].strip() == 'python':
-        code = '\n'.join(code_lines[1:])
-    
-    # Optionally strip a trailing quote if one got appended wrongly
-    code = code.rstrip('"\'')
-    
-    return code.strip()
-
 def write_execute_py(code: str) -> str:
     try:
-        # Clean the code string
-        code = clean_code_string(code)
+        # Strip surrounding triple quotes if present
+        if code.startswith('"""') and code.endswith('"""'):
+            code = code[3:-3]
+        elif code.startswith("'''") and code.endswith("'''"):
+            code = code[3:-3]
+        elif code.startswith("```") and code.endswith("```"):
+            code = code[3:-3]
+        # Properly handle markdown code blocks
+
+        if code.startswith("```python") and code.endswith("```"):
+            code = code[len("```python"):-3].strip()
+        elif code.endswith("```"):
+            code = code[:-3]
         
-        print(f"Writing to machine.py:\n{code}")
-        
+        # Ensure no language identifier at start of file
+        code_lines = code.strip().split('\n')
+        if code_lines and code_lines[0].strip() == 'python':
+            code = '\n'.join(code_lines[1:])
+
+        # Optionally strip a trailing quote if one got appended wrongly
+        code = code.rstrip('"\'')
+
         with open("machine.py", "w") as f:
-            f.write(code)
-            
-        print("Code written to machine.py, now executing...")
-        
-        # Run the file
+            f.write(code.strip())
+        print("Running machine.py ...")
         result = subprocess.run(["python", "machine.py"], capture_output=True, text=True, timeout=10)
         print(f"STDOUT:\n{result.stdout}")
         print(f"STDERR:\n{result.stderr}")
-        
         if result.returncode == 0:
             return f"APPROVED - machine.py ran successfully.\nOutput:\n{result.stdout.strip()}"
         else:
@@ -99,35 +88,13 @@ def write_execute_py(code: str) -> str:
     except subprocess.TimeoutExpired:
         return "NEEDS REVISION - machine.py timed out during execution."
 
-# Create a direct file writing function (without execution)
-def write_code_to_file(code: str) -> str:
-    """Simply writes code to machine.py without executing it."""
-    try:
-        code = clean_code_string(code)
-        
-        print(f"Writing to machine.py (without execution):\n{code}")
-        
-        with open("machine.py", "w") as f:
-            f.write(code)
-            
-        return f"Code written to machine.py successfully."
-    except Exception as e:
-        return f"Failed to write to machine.py: {str(e)}"
-
 FileWriteTool = Tool(
     name="WriteToFile",
     func=write_execute_py,
     description="Writes the provided Python code to machine.py file and executes it if it says it require revision then you have to call PythonREPLTool to re-write the code. Input should be valid Python code as a string."
 )
 
-# Adding a simpler file writing tool
-DirectFileWriteTool = Tool(
-    name="DirectWriteToFile",
-    func=write_code_to_file,
-    description="Simply writes the provided Python code to machine.py file without executing it. Use this when you just want to save the code. Input should be valid Python code as a string."
-)
-    
-tools = [PythonREPLTool(), FileWriteTool, DirectFileWriteTool]
+tools = [PythonREPLTool(), FileWriteTool]
 
 # Code Writer Agent
 def read_existing_code() -> str:
@@ -174,31 +141,12 @@ writer_agent = create_chain_react_agent(llm=llm, tools=tools, prompt=writer_prom
 writer_executor = AgentExecutor(agent=writer_agent, tools=tools, verbose=True, handle_parsing_errors=True)
 
 # Custom handler for WriterAgent to ensure code is saved properly
-def writer_agent_handler(input_text):
-    """Custom handler for WriterAgent that ensures code is saved properly."""
-    try:
-        result = writer_executor.invoke({"input": input_text})
-        
-        # Extract code if the result contains Python code block
-        output = result.get("output", "")
-        code_match = re.search(r'```python\s*([\s\S]*?)\s*```', output)
-        
-        if code_match:
-            # We found some code in the output
-            code = code_match.group(1)
-            print("Found code in WriterAgent output, saving to file...")
-            write_code_to_file(code)
-            
-        return output
-    except Exception as e:
-        print(f"Error in WriterAgent: {e}")
-        return f"Error in WriterAgent: {e}"
 
 WriterTool = Tool(
-        name="WriterAgent",
-        func=writer_agent_handler,
-        description="Writes or updates machine.py with Python code based on the input prompt. Automatically extracts and saves any code blocks in the response."
-    )
+            name="WriterAgent",
+            func=lambda input_text: writer_executor.invoke({"input": input_text})["output"],
+            description="Writes or updates machine.py with Python code based on the input prompt."
+        )
 
 evaluator_prompt = hub.pull("langchain-ai/react-agent-template").partial(
         instructions="""You are an agent that checks if the code in machine.py works.
@@ -235,9 +183,9 @@ template = """
     Thought: I now know the final answer
     Final Answer: the final answer to the original input question
     
-    IMPORTANT: You must NEVER include both an Action and a Final Answer in the same response.
-    If you want to take an action, only include Action/Action Input.
-    If you're ready to give a final answer, only include Final Answer.
+    Thought: If the EvaluationTool says code is APPROVED then only you have to confirm that code is good.
+    After wrtiting the code using WriterTool you have to use EvaluationTool to check if it correct or not
+    Final Answer: the final answer to the original input question
     
     Begin!
     
@@ -437,66 +385,7 @@ def run_agent_with_steps(agent, tools, input_text: str, max_iterations: int = 10
         
         except OutputParserException as e:
             print(f"Parsing error: {e}")
-            # Try to extract useful information even if parsing fails
-            # If the error message contains the LLM output, we can try to salvage it
-            error_msg = str(e)
-            if "Parsing LLM output" in error_msg:
-                error_parts = error_msg.split("Parsing LLM output")
-                if len(error_parts) > 1:
-                    llm_output = error_parts[1]
-                    
-                    # Check if there's code we can extract
-                    code = extract_code_from_text(llm_output)
-                    if code:
-                        print("Found code in parsing error, saving it...")
-                        code_accumulated = code
-                        
-                        # If it's clearly meant for WriterAgent, directly write to file
-                        if "WriterAgent" in llm_output and "Action Input:" in llm_output:
-                            print("Directly writing extracted code to file...")
-                            result = write_code_to_file(code)
-                            print(f"Write result: {result}")
-                    
-                    # Check if there's an action we can extract
-                    if "Action:" in llm_output and "Action Input:" in llm_output:
-                        print("Attempting to recover action from parsing error...")
-                        try:
-                            action_parts = llm_output.split("Action:")
-                            if len(action_parts) > 1:
-                                action_part = action_parts[1]
-                                tool_name_parts = action_part.split("\n", 1)
-                                if len(tool_name_parts) > 0:
-                                    tool_name = tool_name_parts[0].strip()
-                                    
-                                    input_parts = action_part.split("Action Input:")
-                                    if len(input_parts) > 1:
-                                        tool_input = input_parts[1].split("\n\n", 1)[0].strip()
-                                        
-                                        print(f"Recovered - Tool: {tool_name}, Input: {tool_input}")
-                                        
-                                        # Try to execute the tool
-                                        try:
-                                            tool_to_use = find_tool_by_name(tools, tool_name)
-                                            
-                                            # Special handling for WriterAgent to extract code
-                                            if tool_name == "WriterAgent" or tool_name == "WriteToFile" or tool_name == "DirectWriteToFile":
-                                                code = extract_code_from_text(tool_input)
-                                                if code:
-                                                    code_accumulated = code
-                                            
-                                            observation = tool_to_use.func(str(tool_input))
-                                            print(f"Observation: {observation}")
-                                            
-                                            # Create a synthetic AgentAction
-                                            agent_action = AgentAction(tool=tool_name, tool_input=tool_input, log=llm_output)
-                                            intermediate_steps.append((agent_action, str(observation)))
-                                            print("Successfully recovered from parsing error")
-                                            continue
-                                        except Exception as tool_error:
-                                            print(f"Error executing recovered tool: {tool_error}")
-                        except Exception as recovery_error:
-                            print(f"Error during recovery attempt: {recovery_error}")
-            
+    
             # If we have code accumulated but couldn't recover normally, write it to file
             if code_accumulated:
                 print("Writing accumulated code to file before failing...")
@@ -564,7 +453,7 @@ app = workflow.compile()
 
 # Define the input for the workflow
 config = {"recursion_limit": 50}
-inputs={"input": "First, write a code to add 2 numbers by taking input Then do logarithm of the result do step by step. Do it in only 2 steps"}    
+inputs={"input": "write a code to add 2 numbers by taking input do logarithm of the result do step by step."}    
 
 def main():
     print("Starting workflow to execute code generation task...")
@@ -575,16 +464,6 @@ def main():
                 print(v)
     print("\nWorkflow completed.")
     
-    # Display the final code after completion
-    try:
-        with open("machine.py", "r") as f:
-            final_code = f.read()
-            print("\nFinal code in machine.py:")
-            print("-------------------------")
-            print(final_code)
-            print("-------------------------")
-    except Exception as e:
-        print(f"Error reading final code: {e}")
 
 # Execute the workflow
 if __name__ == "__main__":
