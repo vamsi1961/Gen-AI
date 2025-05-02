@@ -268,73 +268,6 @@ planner = planner_prompt | llm.with_structured_output(Plan)
 replanner = replanner_prompt | llm.with_structured_output(Act)
 
 # Define workflow functions
-def execute_step(state: PlanExecute, max_iterations: int = 10):
-    plan = state["plan"]
-    plan_str = "\n".join(f"{i+1}. {step}" for i, step in enumerate(plan))
-    task = plan[0]
-    task_formatted = f"""For the following plan: {plan_str}\n\n You are tasked with executing step {1}, {task}."""
-
-    intermediate_steps = []
-    for i in range(max_iterations):
-        print(f"\n--- Iteration {i+1} ---")
-        try:
-            agent_step = code_agent.invoke({
-                "input": task,
-                "agent_scratchpad": intermediate_steps,
-            })["output"]
-            print(f"[DEBUG] agent_step: {agent_step}")
-        
-
-            # Handle agent finish
-            if isinstance(agent_step, AgentFinish):
-                print("### Agent Finished ###")
-                print(f"Final Answer: {agent_step.return_values['output']}")
-                return {"past_steps": [(task, agent_step)]}
-                
-            # Handle agent action
-            elif isinstance(agent_step, AgentAction):
-                tool_name = agent_step.tool
-                print(f"Selected tool: {tool_name}")
-                tool_to_use = find_tool_by_name(tools, tool_name)
-                tool_input = agent_step.tool_input
-                observation = tool_to_use.func(str(tool_input))
-                print(f"Observation: {observation}")
-                intermediate_steps.append((agent_step, str(observation)))
-            
-            # Handle dict-based output from ReAct pipeline
-            elif isinstance(agent_step, dict):
-                if agent_step.get("type") == "agent_finish":
-                    print("### Agent Finished ###")
-                    print(f"Final Answer: {agent_step['return_values']['output']}")
-                    return {"past_steps": [(task, agent_step)]}
-                
-                elif agent_step.get("type") == "agent_action":
-                    tool_name = agent_step["tool"]
-                    print(f"Selected tool: {tool_name}")
-                    tool_to_use = find_tool_by_name(tools, tool_name)
-                    tool_input = agent_step["tool_input"]
-                    observation = tool_to_use.func(str(tool_input))
-                    print(f"Observation: {observation}")
-                    intermediate_steps.append((agent_step, str(observation)))
-                else:
-                    print("Unknown agent output format:", agent_step)
-            else:
-                print("Unknown agent output type:", type(agent_step))
-            
-        except Exception as e:
-            print(f"Error during agent execution: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            # Try to continue with the next iteration
-            continue
-
-        except Exception as e:
-                print(f"[ERROR] code_agent failed to process: {str(e)}")
-                import traceback; traceback.print_exc()
-                return None
-            
-    print("Reached maximum iterations without finishing")
-    return None
 
 def plan_step(state: PlanExecute):
     plan = planner.invoke({"messages": [("user", state["input"])]})
@@ -353,6 +286,50 @@ def should_end(state: PlanExecute):
         return END
     else:
         return "agent"
+
+def run_agent_with_steps(agent, tools, input_text: str, max_iterations: int = 10):
+        """Run the agent for multiple iterations until it reaches a final answer or max iterations"""
+        intermediate_steps = []
+        
+        for i in range(max_iterations):
+            print(f"\n--- Iteration {i+1} ---")
+            agent_step = agent.invoke(
+                {
+                    "input": input_text,
+                    "agent_scratchpad": intermediate_steps,
+                }
+            )
+            
+            print(f"Agent output: {agent_step}")
+            
+            if isinstance(agent_step, AgentFinish):
+                print("### Agent Finished ###")
+                print(f"Final Answer: {agent_step.return_values['output']}")
+                return agent_step
+                
+            if isinstance(agent_step, AgentAction):
+                tool_name = agent_step.tool
+                print(f"Selected tool: {tool_name}")
+                tool_to_use = find_tool_by_name(tools, tool_name)
+                tool_input = agent_step.tool_input
+                observation = tool_to_use.func(str(tool_input))
+                print(f"Observation: {observation}")
+                intermediate_steps.append((agent_step, str(observation)))
+                print(f"intermediate_steps is {intermediate_steps}")
+            
+        print("Reached maximum iterations without finishing")
+        return None
+
+def execute_step(state: PlanExecute, max_iterations: int = 10):
+    plan = state["plan"]
+    plan_str = "\n".join(f"{i+1}. {step}" for i, step in enumerate(plan))
+    task = plan[0]
+    task_formatted = f"""For the following plan: {plan_str}\n\n You are tasked with executing step {1}, {task}."""
+
+    result = run_agent_with_steps(code_agent, tools, task_formatted)
+    return result
+            
+
 
 # Build the workflow
 workflow = StateGraph(PlanExecute)
@@ -376,6 +353,8 @@ app = workflow.compile()
 # Define the input for the workflow
 config = {"recursion_limit": 50}
 inputs={"input": "First, write a code to add 2 numbers by taking input Then do logarithm of the result do step by step. Do it in only 2 steps"}    
+
+
 
 def main():
     print("Starting workflow to analyze episode_info.csv...")
