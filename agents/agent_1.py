@@ -4,9 +4,11 @@ from langchain.tools import Tool
 from langchain.schema import AgentAction, AgentFinish
 from langchain.agents.output_parsers import ReActSingleInputOutputParser
 from langchain.tools import TavilySearchResults
+import re
 from typing import List
 from dotenv import load_dotenv
 import os
+
 # Set environment variables
 os.environ["LANGCHAIN_TRACING_V2"] = "false"
 os.environ["LANGCHAIN_ENDPOINT"] = ""
@@ -110,29 +112,53 @@ def run_agent_with_steps(agent, tools, input_text: str, max_iterations: int = 10
     
     for i in range(max_iterations):
         print(f"\n--- Iteration {i+1} ---")
-        agent_step = agent.invoke(
-            {
-                "input": input_text,
-                "agent_scratchpad": format_log_to_str(intermediate_steps),
-            }
-        )
-        
-        print(f"Agent output: {agent_step}")
-        
-        if isinstance(agent_step, AgentFinish):
-            print("### Agent Finished ###")
-            print(f"Final Answer: {agent_step.return_values['output']}")
-            return agent_step
+        try:
+            agent_step = agent.invoke(
+                {
+                    "input": input_text,
+                    "agent_scratchpad": format_log_to_str(intermediate_steps),
+                }
+            )
             
-        if isinstance(agent_step, AgentAction):
-            tool_name = agent_step.tool
-            print(f"Selected tool: {tool_name}")
-            tool_to_use = find_tool_by_name(tools, tool_name)
-            tool_input = agent_step.tool_input
-            observation = tool_to_use.func(str(tool_input))
-            print(f"Observation: {observation}")
-            intermediate_steps.append((agent_step, str(observation)))
-            print(f"intermediate_steps is {intermediate_steps}")
+            print(f"Agent output: {agent_step}")
+            
+            if isinstance(agent_step, AgentFinish):
+                print("### Agent Finished ###")
+                print(f"Final Answer: {agent_step.return_values['output']}")
+                return agent_step
+                
+            if isinstance(agent_step, AgentAction):
+                tool_name = agent_step.tool
+                print(f"Selected tool: {tool_name}")
+                tool_to_use = find_tool_by_name(tools, tool_name)
+                tool_input = agent_step.tool_input
+                observation = tool_to_use.func(str(tool_input))
+                print(f"Observation: {observation}")
+                intermediate_steps.append((agent_step, str(observation)))
+                print(f"intermediate_steps is {intermediate_steps}")
+                
+        except Exception as e:
+            print(f"Error in iteration {i+1}: {str(e)}")
+            # Add debugging information
+            print("Trying to recover and continue...")
+            
+            if len(intermediate_steps) > 0:
+                last_observation = intermediate_steps[-1][1]
+                # Create a manual thought to help guide the LLM back on track
+                manual_thought = (
+                    AgentAction(
+                        tool="Thought",
+                        tool_input="Based on the JSON data I retrieved, I should now provide a final answer.",
+                        log="Thought: Based on the JSON data I retrieved, I should now provide a final answer."
+                    ),
+                    "Based on the observation, I can now answer the question."
+                )
+                intermediate_steps.append(manual_thought)
+                print("Added recovery step to get back on track")
+                continue
+            else:
+                print("Cannot recover, exiting...")
+                break
         
     print("Reached maximum iterations without finishing")
     return None
@@ -144,7 +170,7 @@ template = """
     
     To answer questions about JSON data, you should use the GetRawJSON tool first to see what JSON data is available.
     
-    Use the following format:
+    Use the following format EXACTLY:
     
     Question: the input question you must answer
     Thought: you should always think about what to do
@@ -154,6 +180,10 @@ template = """
     ... (this Thought/Action/Action Input/Observation can repeat N times)
     Thought: I now know the final answer
     Final Answer: the final answer to the original input question
+    
+    After each observation, you MUST respond with a Thought followed by either an Action or Final Answer.
+    NEVER respond with just a summary or explanation after an observation.
+    ALWAYS follow the format above, with Thought/Action/Action Input or Thought/Final Answer.
     
     Begin!
     
@@ -166,6 +196,25 @@ prompt = PromptTemplate.from_template(template).partial(
     tool_names=", ".join([t.name for t in tools]),
 )
 
+# Custom output parser with more robust error handling
+class CustomReActOutputParser(ReActSingleInputOutputParser):
+    def parse(self, text):
+        try:
+            return super().parse(text)
+        except Exception as e:
+            print(f"Parser error: {str(e)}")
+            print(f"Raw text causing the error: {text}")
+            
+            # Check if this looks like a final answer attempt
+            if "The JSON input" in text or "JSON data" in text:
+                print("Detected attempt at final answer, converting format...")
+                # Convert to proper format
+                reformatted = f"Thought: I now know the final answer\nFinal Answer: {text}"
+                return super().parse(reformatted)
+            
+            # If no specific pattern recognized, raise the original error
+            raise e
+
 agent = (
     {
         "input": lambda x: x["input"],
@@ -173,7 +222,7 @@ agent = (
     }
     | prompt
     | llm
-    | ReActSingleInputOutputParser()
+    | CustomReActOutputParser()
 )
 
 # Main execution
