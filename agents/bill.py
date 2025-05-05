@@ -1,17 +1,30 @@
 from langchain.prompts import PromptTemplate
-from langchain_openai import AzureChatOpenAI
-from langchain.tools import Tool
+from langchain.llms import OpenAI
+from langchain.chains import LLMChain
 from langchain.schema import AgentAction, AgentFinish
 from langchain.agents.output_parsers import ReActSingleInputOutputParser
 from langchain.tools import TavilySearchResults
 from typing import List
+
+
+from typing import Union, List, Dict, Any
 from dotenv import load_dotenv
+from langchain.agents import tool
+from langchain.agents.format_scratchpad import format_log_to_str
+from langchain.agents.output_parsers import ReActSingleInputOutputParser
+from langchain_openai import ChatOpenAI
+from langchain.prompts import PromptTemplate
+from langchain.schema import AgentAction, AgentFinish
+from langchain.tools import Tool
+from langchain.tools.render import render_text_description
+from langchain_openai import AzureChatOpenAI
 import os
-# Set environment variables
 os.environ["LANGCHAIN_TRACING_V2"] = "false"
 os.environ["LANGCHAIN_ENDPOINT"] = ""
 os.environ["LANGCHAIN_API_KEY"] = ""
 load_dotenv()
+
+
 
 # Define your JSON data here
 raw_json_string = """
@@ -20,12 +33,13 @@ raw_json_string = """
   "age": 30,
   "occupation": "Software Engineer",
   "skills": ["Python", "JavaScript", "Machine Learning"],
-  "email": "john.doe@example.com",
-  "phone": "123-456-7890"
+    "email": "john.doe@example.com",
+    "phone": "123-456-7890"
+  }
 }
 """
 
-# Define the prompt template for JSON extraction
+# Define the prompt template
 prompt = PromptTemplate.from_template("""
 You are a smart JSON data extractor.
 
@@ -38,7 +52,10 @@ Question:
 Answer in concise JSON or text.
 """)
 
-# Initialize the Azure OpenAI LLM
+# Initialize the LLM
+# llm = OpenAI(temperature=0)  # Make sure to set your OPENAI_API_KEY
+
+
 azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
 azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
 gpt4_deployment_name = os.getenv("AZURE_DEPLOYMENT_NAME")
@@ -51,19 +68,21 @@ llm = AzureChatOpenAI(
     stop=["\nObservation", "Observation"]
 )
 
-# Create a function that queries the JSON based on natural language
-def query_json_tool(query):
-    return llm.invoke(prompt.format(json_data=raw_json_string, query=query))
+# Define the LLMChain
+chain = LLMChain(llm=llm, prompt=prompt)
 
-# Create a function that returns the raw JSON (FIX: now accepts an unused parameter)
-def get_raw_json(unused_input=""):
-    """Returns the raw JSON data regardless of input."""
+# Define the function that uses the chain
+def query_json_tool(query, json_data):
+    return chain.run({"json_data": json_data, "query": query})
+
+# Create a simpler function that just returns the raw JSON
+def get_raw_json():
     return raw_json_string
 
 # Create the tools
 json_query_tool = Tool(
     name="JSONQueryTool",
-    func=query_json_tool,
+    func=lambda q: query_json_tool(raw_json_string,q),
     description="Use this to extract information from a JSON blob using natural language queries."
 )
 
@@ -86,7 +105,7 @@ get_length = Tool(
     description="Calculates the number of characters in a string."
 )
 
-# Add your tools to a list
+# Add your tools to a list - put the raw JSON tool first for visibility
 tools = [raw_json_tool, json_query_tool, tavily_tool, get_length]
 
 def render_text_description(tools):
@@ -98,12 +117,6 @@ def format_log_to_str(intermediate_steps):
         log_str += f"Action: {action.tool}\nAction Input: {action.tool_input}\nObservation: {observation}\n"
     return log_str
 
-def find_tool_by_name(tools: List[Tool], tool_name: str) -> Tool:
-    for tool in tools:
-        if tool.name == tool_name:
-            return tool
-    raise ValueError(f"Tool with name {tool_name} not found")
-
 def run_agent_with_steps(agent, tools, input_text: str, max_iterations: int = 10):
     """Run the agent for multiple iterations until it reaches a final answer or max iterations"""
     intermediate_steps = []
@@ -113,7 +126,7 @@ def run_agent_with_steps(agent, tools, input_text: str, max_iterations: int = 10
         agent_step = agent.invoke(
             {
                 "input": input_text,
-                "agent_scratchpad": format_log_to_str(intermediate_steps),
+                "agent_scratchpad": intermediate_steps,
             }
         )
         
@@ -137,6 +150,12 @@ def run_agent_with_steps(agent, tools, input_text: str, max_iterations: int = 10
     print("Reached maximum iterations without finishing")
     return None
 
+def find_tool_by_name(tools: List[Tool], tool_name: str) -> Tool:
+    for tool in tools:
+        if tool.name == tool_name:
+            return tool
+    raise ValueError(f"Tool with name {tool_name} not found")
+
 template = """
     Answer the following questions as best you can. You have access to the following tools:
 
@@ -158,36 +177,32 @@ template = """
     Begin!
     
     Question: {input}
-    {agent_scratchpad}
+    Thought: {agent_scratchpad}
     """
 
-prompt = PromptTemplate.from_template(template).partial(
+prompt = PromptTemplate.from_template(template=template).partial(
     tools=render_text_description(tools),
     tool_names=", ".join([t.name for t in tools]),
 )
 
 agent = (
-    {
-        "input": lambda x: x["input"],
-        "agent_scratchpad": lambda x: x["agent_scratchpad"],
-    }
-    | prompt
-    | llm
-    | ReActSingleInputOutputParser()
+        {
+            "input": lambda x: x["input"],
+            "agent_scratchpad": lambda x: format_log_to_str(x["agent_scratchpad"]),
+        }
+        | prompt
+        | llm
+        | ReActSingleInputOutputParser()
 )
 
-# Main execution
-if __name__ == "__main__":
-    # Print the tools to verify they're correctly defined
-    print("Available tools:")
-    print(render_text_description(tools))
-    
-    # Test question 1
-    print("\n=== Testing 'what is the json input' ===")
-    complex_question = "what is the json input"
-    final_result = run_agent_with_steps(agent, tools, complex_question)
-    
-    # Test question 2
-    print("\n=== Testing 'what is John's age' ===")
-    specific_question = "what is John's age"
-    final_result2 = run_agent_with_steps(agent, tools, specific_question)
+# Print the tools to verify they're correctly defined
+print(tools)
+
+# Now let's test both questions
+print("\n=== Testing 'what is the json input' ===")
+complex_question = "what is the json input"
+final_result = run_agent_with_steps(agent, tools, complex_question)
+
+print("\n=== Testing 'what is John's age' ===")
+specific_question = "what is John's age"
+final_result2 = run_agent_with_steps(agent, tools, specific_question)
