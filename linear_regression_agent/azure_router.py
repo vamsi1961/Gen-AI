@@ -107,7 +107,7 @@ def main():
     Action Input: the input to the action
     Observation: the result of the action
     ... (this Thought/Action/Action Input/Observation can repeat N times)
-    Thought: If the EvaluationTool says code is APPROVED then only you have to confirm that code is good.After wrtiting the code using WriterTool you have to use EvaluationTool to check if it correct or not
+    Thought:First writer tool should write the code then the code should be tested by EvaluationTool.If the EvaluationTool says code is APPROVED then only you have to confirm that code is good.After wrtiting the code using WriterTool you have to use EvaluationTool to check if it correct or not
     Final Answer: the final answer to the original input question
     
     Begin!
@@ -180,7 +180,7 @@ def main():
         return None
 
     # Start interaction
-    user_request = "write a python code for fibonacci series upto 10 and also write print hello world program do step by step update the code "
+    user_request = "First, write a code to add 2 numbers by taking input Then do logarithm of the result do step by step. Do it in only 2 steps"
     result = run_agent_with_steps(agent, tools, user_request)
     print(result)
 
@@ -189,5 +189,3 @@ def main():
 if __name__ == "__main__":
     
     main()
-
-"https://chatgpt.com/share/68111baf-edc8-800a-b2e6-824df2e9157d"

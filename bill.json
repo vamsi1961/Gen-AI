@@ -1,0 +1,43 @@
+
+{
+  "document_type": "Tax Invoice",
+  "vendor": {
+    "name": "Tech-Connect Retail Private Limited",
+    "address": "No.150,256,268 and 283, Malur Industrial Area, Honnur Village, Lakkur Hobli, Malur Taluk, Kolar, Karnataka, 563130, India",
+    "GSTIN": "29AAICA4872D1ZK"
+  },
+  "customer": {
+    "name": "Amrishbhai Patel",
+    "address": "03 - Venice Bungalows, Near Ring Road, Behind Rainforest Bungalows, Nana Chiloda, Ahmedabad 382330 Gujarat",
+    "phone": "xxxxxxxx"
+  },
+  "invoice_details": {
+    "invoice_number": "FABD2C100864029",
+    "order_id": "OD11957107836432000",
+    "invoice_date": "31-08-2020"
+  },
+  "pan": "AAICA4872D",
+  "cin": "U52100DL2017PLC296200",
+  "items": [
+    {
+      "product_name": "Honor MagicBook 15 Ryzen 5 Quad Core - 8 GB/256 GB SSD/Windows 10 Home - WAQ9HNPR",
+      "description": "Light Laptop",
+      "quantity": 1,
+      "gross_amount": 42990.00,
+      "discount": 0.00,
+      "taxable_value": 36432.20,
+      "igst": 6557.80,
+      "total": 42990.00
+    }
+  ],
+  "total_amount": {
+    "taxable_value": 36432.20,
+    "igst": 6557.80,
+    "grand_total": 42990.00
+  },
+  "notes": [
+    "Keep this invoice and manufacturer box for warranty purposes."
+  ],
+  "warranty": "1 Year Limited Domestic Warranty",
+  "model_number": "KPHMP202710708"
+}

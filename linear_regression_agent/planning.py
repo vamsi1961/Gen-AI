@@ -157,30 +157,22 @@ workflow.add_conditional_edges(
 
 app = workflow.compile()
 
-display(Image(app.get_graph(xray=True).draw_mermaid_png()))
 
 planner_prompt = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            """For given ibjective you have to plan step by step. make sure you give clear steps, 
-            you steps are taken by writer tool it writes the code and then evaluationtool evaluates it if is evaluated properly then you have to go to next step
-            write concise steps dont write unnecessary matter just what to do
-            """,
+            """For the given objective, come up with a simple step by step plan. \
+This plan should involve individual tasks, that if executed correctly will yield the correct answer. Do not add any superfluous steps. \
+The result of the final step should be the final answer. Make sure that each step has all the information needed - do not skip steps.""",
         ),
         ("placeholder", "{messages}"),
     ]
 )
 planner = planner_prompt | llm.with_structured_output(Plan)
-planner.invoke(
-    {
-        "messages": [ ("user", "what is the hometown of the current Australia open winner?") ]
-    }
-)
-
 
 config = {"recursion_limit": 50}
-inputs = {"input": "what is the hometown of the current Australia open winner?"}
+inputs = {"input": "what is the hometown of the current Australia open men's single winner?"}
 
 async def main():
     async for event in app.astream(inputs, config=config):

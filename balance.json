@@ -1,0 +1,43 @@
+```json
+{
+  "invoice": {
+    "invoice_number": "FAB2DC1200864029",
+    "order_id": "OD195710783642000",
+    "invoice_date": "31-08-2020",
+    "due_date": "31-08-2020",
+    "pan": "AAICA4872D1ZK",
+    "cin": "U52100GJ2010PTC202600"
+  },
+  "vendor": {
+    "name": "Tech-Connect Retail Private Limited",
+    "address": "No. 110, 210-260 and 261, Industrial Area, Hoshangabad Road, Koregaon, Karvenagar, Pune, Maharashtra, India - 411034",
+    "gstin": "29AAICA4872D1ZK"
+  },
+  "customer": {
+    "name": "Amrishbhai Patel",
+    "address": "03 - Venice Bungalows, Near SP Ring Road, Behind Rainforest Bungalows, Nana Chiloda, Ahmedabad 382330 Gujarat",
+    "phone": "XXXXXXXXXX"
+  },
+  "items": [
+    {
+      "product_name": "Honor MagicBook 15 Ryzen 4 Core - 8 GB/256 GB SSD/Windows 10 Home",
+      "hsn_sac": "84713010",
+      "quantity": 1,
+      "gross_amount": 42990.00,
+      "discount": 0.00,
+      "taxable_value": 36432.20,
+      "igst": 6557.80,
+      "total": 42990.00
+    }
+  ],
+  "summary": {
+    "grand_total": 42990.00,
+    "igst_total": 6557.80
+  },
+  "notes": "Keep this invoice and warranty card for warranty purposes.",
+  "authorized_signature": "Authorized Signatory"
+}
+```
+Warning: Response is not valid JSON. Saving as raw text.
+Saved to balance.json
+
