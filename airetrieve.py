@@ -8,10 +8,6 @@ from azure.core.credentials import AzureKeyCredential
 from azure.core.exceptions import ResourceExistsError
 
 # Set up Azure OpenAI API key and endpoint
-openai.api_type = "azure"
-openai.api_base = "https://genaitcgazuregpt.openai.azure.com"
-openai.api_version = "2024-02-15-preview"
-openai.api_key = ""
 
 # Function to generate embeddings using Azure OpenAI
 def generate_embeddings(text):
@@ -19,8 +15,6 @@ def generate_embeddings(text):
     return response['data'][0]['embedding']
 
 # Set up Azure Search credentials and endpoint
-search_endpoint = "https://genai-azureaisearch.search.windows.net"
-search_api_key = ""
 
 # Define the index schema
 index_name = "genai12345"
@@ -34,10 +28,17 @@ index = SearchIndex(name=index_name, fields=fields)
 
 # Create the index if it does not exist
 index_client = SearchIndexClient(endpoint=search_endpoint, credential=AzureKeyCredential(search_api_key))
-try:
+# Get a list of all existing index names
+existing_indexes = [idx.name for idx in index_client.list_indexes()]
+
+# Create the index only if it doesn't already exist
+if index_name not in existing_indexes:
+    index = SearchIndex(name=index_name, fields=fields)
     index_client.create_index(index)
-except ResourceExistsError:
+    print(f"Index '{index_name}' created.")
+else:
     print(f"Index '{index_name}' already exists.")
+
 
 # Initialize the search client
 search_client = SearchClient(endpoint=search_endpoint, index_name=index_name, credential=AzureKeyCredential(search_api_key))
